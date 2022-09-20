@@ -69,11 +69,13 @@ q_proposal(gp, i; failures_only=false) = failures_only ? kde(falsification(gp)[i
 Sample from |̂f(x)|p(x).
 """
 function is_estimate_theoretically_optimal(gp, models; n=10_000, λ=0.1)
-    acq = (gp,x)->operational_acquisition(gp, x, models; λ)
-    X, Q = sample_next_point(gp, gp_output(gp, models), models; n, acq, return_weight=true)
+    acq = (gp,x)->failure_region_acquisition(gp, x, models; λ)
+    X, Q = sample_next_point(gp, models; n, acq, return_weight=true)
 
     p = x->prod(pdf(models[i].distribution, x[i]) for i in eachindex(models))
     P = map(x->p(x), X)
 
-    return mean(P ./ Q) # Y already all ones (i.e., all failures)
+    Y = map(x->f_gp(gp, x) > 0.5, X)
+
+    return mean(P ./ Q .* Y)
 end

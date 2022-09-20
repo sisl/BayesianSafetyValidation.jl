@@ -39,7 +39,7 @@ Run the GP and get the predicted output across a discretized space defined by `m
 
 **TODO**: generalize to more than 2 dimensions (NOTE: [x,y] and the "for" ordering of `y` then `x`. This is to make sure the matrix is in the same orientation for plotting with the smallest values at the bottom-left origin.)
 """
-function gp_output(gp, models::Vector{OperationalParameters}, m=fill(200, length(models)); f=f_gp, clamping=true)
+function gp_output(gp, models::Vector{OperationalParameters}; m=fill(200, length(models)), f=f_gp, clamping=true)
     p(x) = prod(m->pdf(m.distribution,x), models)
     y = [f(gp, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
 
@@ -106,7 +106,7 @@ end
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty of failure distribution.
 """
-function operational_acquisition(gp, x, models::Vector{OperationalParameters}; λ=1, t=1)
+function failure_region_acquisition(gp, x, models::Vector{OperationalParameters}; λ=1, t=1)
 	μ_σ² = predict_f_vec(gp, x)
 	μ = μ_σ²[1][1]
 	σ² = μ_σ²[2][1]
@@ -124,23 +124,23 @@ end
 Combining multi-objective acquisition functions.
 """
 function multi_objective_acqusition(gp, x, models; λ=1)
-    return operational_acquisition(gp, x, models; λ) * boundary_acquisition(gp, x, models; λ) * uncertainty_acquisition(gp, x, models; λ)
+    return failure_region_acquisition(gp, x, models; λ) * boundary_acquisition(gp, x, models; λ) * uncertainty_acquisition(gp, x, models; λ)
 end
 
 
 """
 Get the next recommended sample point based on the operational models and failure boundary.
 """
-function get_next_point(gp, y, models; acq, acq_explore=nothing)
-    model_ranges = get_model_ranges(models, size(y))
-    boundary_gp = gp_output(gp, models, size(y); f=acq, clamping=false)
+function get_next_point(gp, models; acq, acq_explore=nothing)
+    model_ranges = get_model_ranges(models)
+    y_gp = gp_output(gp, models; f=acq, clamping=false)
     if !isnothing(acq_explore)
-        explore_gp = gp_output(gp, models, size(y); f=acq_explore, clamping=false)
+        explore_gp = gp_output(gp, models; f=acq_explore, clamping=false)
         explore_gp = normalize01(explore_gp)
-        boundary_gp = normalize01(boundary_gp)
-        boundary_gp = explore_gp + boundary_gp
+        y_gp = normalize01(y_gp)
+        y_gp = explore_gp + y_gp
     end
-    next_point = argmax(model_ranges[1], model_ranges[2], boundary_gp)
+    next_point = argmax(model_ranges[1], model_ranges[2], y_gp)
     return next_point
 end
 
@@ -148,11 +148,11 @@ end
 """
 Stochastically sample next point using normalized weights.
 """
-function sample_next_point(gp, y, models; n=1, r=1, acq, return_weight=false)
-    boundary_gp = gp_output(gp, models, size(y); f=acq, clamping=false)
-    boundary_gp = normalize01(boundary_gp) # to eliminate negative weights
-    X = [[x,y] for y in range(models[2].range[1], models[2].range[end], length=size(y,2)), x in range(models[1].range[1], models[1].range[end], length=size(y,1))]
-    Z = normalize(boundary_gp .^ r, 1)
+function sample_next_point(gp, models; n=1, r=1, acq, return_weight=false)
+    y_gp = gp_output(gp, models; f=acq, clamping=false)
+    y_gp = normalize01(y_gp) # to eliminate negative weights
+    X = [[x,y] for y in range(models[2].range[1], models[2].range[end], length=size(y_gp,2)), x in range(models[1].range[1], models[1].range[end], length=size(y_gp,1))]
+    Z = normalize(y_gp .^ r, 1)
     if all(isnan.(Z))
         Z = ones(size(Z))
     end

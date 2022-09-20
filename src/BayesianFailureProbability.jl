@@ -46,7 +46,7 @@ export
     lcb,
     uncertainty_acquisition,
     boundary_acquisition,
-    operational_acquisition,
+    failure_region_acquisition,
     multi_objective_acqusition,
     get_next_point,
     sample_next_point,

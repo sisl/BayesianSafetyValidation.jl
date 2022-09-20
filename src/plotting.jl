@@ -18,7 +18,7 @@ Plot actual data points ran through the system.
 Green indicates non-failure, red indicates failure.
 """
 function plot_data!(X, Y)
-    for i in 1:length(Y)
+    for i in eachindex(Y)
         k = X[:, i]
         v = Y[i]
         color = v ? :red : :green
@@ -83,11 +83,11 @@ end
 """
 Plot prediction of the GP as a hard decision boundary of either [0,1] given threshold of 0.5
 """
-function plot_acquisition(gp, y, models; acq, acq_explore=nothing, return_point=false, show_point=true, given_next_point=nothing, as_pdf=false, clamping=false, ms=5)
-    model_ranges = get_model_ranges(models, size(y))
-    boundary_gp = gp_output(gp, models, size(y); f=acq, clamping)
+function plot_acquisition(gp, models; m=fill(200, length(models)), acq, acq_explore=nothing, return_point=false, show_point=true, given_next_point=nothing, as_pdf=false, clamping=false, ms=5)
+    model_ranges = get_model_ranges(models, m)
+    boundary_gp = gp_output(gp, models; m, f=acq, clamping)
     if !isnothing(acq_explore)
-        explore_gp = gp_output(gp, models, size(y); f=acq_explore, clamping=false)
+        explore_gp = gp_output(gp, models; m, f=acq_explore, clamping=false)
         explore_gp = normalize01(explore_gp)
         boundary_gp = normalize01(boundary_gp)
         boundary_gp = explore_gp + boundary_gp
@@ -107,7 +107,7 @@ function plot_acquisition(gp, y, models; acq, acq_explore=nothing, return_point=
     if show_point
         if isnothing(given_next_point)
             # get max from acquisition function to show as next point
-            next_point = get_next_point(gp, y, models; acq)
+            next_point = get_next_point(gp, models; acq)
         else
             next_point = given_next_point
         end
@@ -145,8 +145,6 @@ end
 Plot function with model distributions above and to the right.
 """
 function plot_combined(gp, models; surrogate=false, soft=true, show_q=false, acq=nothing, show_point=true, title=nothing, mlf=false, label1=models[1].name, label2=models[2].name, show_data=true)
-    y = gp_output(gp, models)
-
     if surrogate
         if soft
             plt_main = plot_soft_boundary(gp, models; show_data)
@@ -171,9 +169,9 @@ function plot_combined(gp, models; surrogate=false, soft=true, show_q=false, acq
             error("Please assign keywork `acq`")
         end
         if show_point
-            plt_main, next_point = plot_acquisition(gp, y, models; acq, return_point=true)
+            plt_main, next_point = plot_acquisition(gp, models; acq, return_point=true)
         else
-            plt_main = plot_acquisition(gp, y, models; acq, return_point=false, show_point=false)
+            plt_main = plot_acquisition(gp, models; acq, return_point=false, show_point=false)
         end
         xlabel!(label1)
         ylabel!(label2)
@@ -219,7 +217,7 @@ function plot_combined(gp, models; surrogate=false, soft=true, show_q=false, acq
 end
 
 
-plot_acquisition_combined(gp, models; λ, δ, kwargs...) = plot_combined(gp, gp_output(gp, models), models; acq=(gp,x)->boundary_acquisition(gp, x, models; λ, δ), kwargs...)
+plot_acquisition_combined(gp, models; λ, δ, kwargs...) = plot_combined(gp, models; acq=(gp,x)->boundary_acquisition(gp, x, models; λ, δ), kwargs...)
 
 
 """

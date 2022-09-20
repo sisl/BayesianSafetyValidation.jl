@@ -55,7 +55,6 @@ function iteratively_sample(sparams, models;
             m_offset = length(Y) - prod(model->length(model.range), models)
         end
 
-        y = gp_output(gp, models)
         λ = 0.1 # UCB
         if show_plots && !show_acquisition && !show_combined_plot
             display(plot_soft_boundary(gp, models))
@@ -80,15 +79,20 @@ function iteratively_sample(sparams, models;
         for m in (1+m_offset):(M+m_offset)
             inputs = []
             acq_plts = []
-            for a in 1:(alternate_acquisitions ? 3 : 1)
+            if alternate_acquisitions
+                A = 1:3
+            else
+                A = [3] # just sample failure region
+            end
+            for a in A
                 @info "Refinement iteration $m (acquisition $a)"
                 if a == 1
-                    if !any(Y .== 1) && skip_if_no_failures
-                        @warn "No failures found, skipping acquisition for failure distribution."
-                        continue
+                    if any(Y .== 1) && single_failure_mode
+                        @warn "Skipping exploration (single failure mode found)."
+                        continue # skip exploration when a failure is already found (NOTE: only in `single_failure_mode`)
                     end
-                    acq = (gp,x)->operational_acquisition(gp, x, models; λ, t)
-                    sample_from_acquisition = true
+                    acq = (gp,x)->uncertainty_acquisition(gp, x, models; t)
+                    sample_from_acquisition = false
                 elseif a == 2
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure boundary."
@@ -100,22 +104,22 @@ function iteratively_sample(sparams, models;
                     end
                     sample_from_acquisition = false
                 else
-                    if any(Y .== 1) && single_failure_mode
-                        @warn "Skipping exploration (single failure mode found)."
-                        continue # skip exploration when a failure is already found (NOTE: only in `single_failure_mode`)
+                    if !any(Y .== 1) && skip_if_no_failures
+                        @warn "No failures found, skipping acquisition for failure distribution."
+                        continue
                     end
-                    acq = (gp,x)->uncertainty_acquisition(gp, x, models; t)
-                    sample_from_acquisition = false
+                    acq = (gp,x)->failure_region_acquisition(gp, x, models; λ, t)
+                    sample_from_acquisition = true
                 end
 
 
                 if sample_from_acquisition
-                    next_points = sample_next_point(gp, y, models; acq, n=samples_per_batch)
+                    next_points = sample_next_point(gp, models; acq, n=samples_per_batch)
                     for next_point in next_points
                         X = append_sample(X, next_point; m)
                     end
                 else
-                    next_point = get_next_point(gp, y, models; acq, acq_explore=combined_acquisitions ? acq_explore : nothing)
+                    next_point = get_next_point(gp, models; acq, acq_explore=combined_acquisitions ? acq_explore : nothing)
                     X = append_sample(X, next_point; m)
                 end
 
@@ -123,7 +127,7 @@ function iteratively_sample(sparams, models;
                 if show_acquisition || show_combined_plot
                     plt_gp = plot_soft_boundary(gp, models)
                     next_point_ms = show_combined_plot ? 3 : 5
-                    plt_acq = plot_acquisition(gp, y, models; acq, acq_explore=combined_acquisitions ? acq_explore : nothing, given_next_point=sample_from_acquisition ? next_points[1] : next_point, ms=next_point_ms)
+                    plt_acq = plot_acquisition(gp, models; acq, acq_explore=combined_acquisitions ? acq_explore : nothing, given_next_point=sample_from_acquisition ? next_points[1] : next_point, ms=next_point_ms)
                     if show_combined_plot
                         push!(acq_plts, plt_acq)
                     elseif show_acquisition
@@ -145,9 +149,9 @@ function iteratively_sample(sparams, models;
 
 
             if show_combined_plot
-                acq_plts[1] = plot(acq_plts[1], title="operational refinement", titlefontsize=10)
+                acq_plts[1] = plot(acq_plts[1], title="uncertainty exploration", titlefontsize=10)
                 acq_plts[2] = plot(acq_plts[2], title="boundary refinement", titlefontsize=10)
-                acq_plts[3] = plot(acq_plts[3], title="uncertainty exploration", titlefontsize=10)
+                acq_plts[3] = plot(acq_plts[3], title="failure region sampling", titlefontsize=10)
                 plt_surrogate_models = plot_combined(gp, models; surrogate=true, show_data=true, title="surrogate")
                 plt_acquisitions = plot(acq_plts..., layout=(1,3))
                 plt = plot(plt_surrogate_models, plt_acquisitions, layout=@layout([a{0.8h}; b]), size=(750, 650))
