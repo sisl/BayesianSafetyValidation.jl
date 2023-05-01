@@ -213,10 +213,12 @@ function plot_combined(gp, models, sparams; m=[200,200], truth=false, surrogate=
         if isnothing(acq)
             error("Please assign keywork `acq`")
         end
+        F̂ = gp_output(gp, models; f=predict_f_vec)
+        P = p_output(models)
         if show_point
-            plt_main, next_point = plot_acquisition(gp, y, models; acq, return_point=true)
+            plt_main, next_point = plot_acquisition(y, F̂, P, models; acq, return_point=true)
         else
-            plt_main = plot_acquisition(gp, y, models; acq, return_point=false, show_point=false)
+            plt_main = plot_acquisition(y, F̂, P, models; acq, return_point=false, show_point=false)
         end
         xlabel!(label1)
         ylabel!(label2)
