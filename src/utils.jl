@@ -24,23 +24,13 @@ sigmoid(z; c=0, k=1) = 1 / (1 + exp(-(z-c)*k))
 
 normalize01(X) = (X .- minimum(X)) / (maximum(X) - minimum(X))
 
-
-"""
-Return most-likely failure.
-"""
-function most_likely_failure(gp, models; return_index=false)
-    idx = argmax(gp.y[t]*prod(pdf(m.distribution, gp.x[i,t]) for (i,m) in enumerate(models)) for t in 1:length(gp.y))
-    if return_index
-        return gp.x[:, idx], idx
-    else
-        return gp.x[:, idx]
+# Exponential Smoothing (from Crux.jl)
+function smooth(v, weight = 0.6)
+    N = length(v)
+    smoothed = Array{Float64, 1}(undef, N)
+    smoothed[1] = v[1]
+    for i = 2:N
+        smoothed[i] = smoothed[i-1] * weight + (1 - weight) * v[i]
     end
-end
-
-
-"""
-Return all failures.
-"""
-function falsification(gp)
-    return gp.x[:, gp.y]
+    return smoothed
 end

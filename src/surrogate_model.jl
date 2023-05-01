@@ -1,13 +1,24 @@
+logit(y; s=1/10) = log(y / (1 - y)) / s
+inverse_logit(z; s=1/10) = 1 / (1 + exp(-s*z)) # sigmoid with steepness s
+
+transform(y; ϵ=1e-5) = y*(1 - ϵ) + (1 - y)*ϵ
+inverse_transform(ŷ; ϵ=1e-5) = (ŷ - ϵ) / (1 - 2ϵ)
+
+apply(y) = logit(transform(y))
+inverse(y) = clamp(inverse_transform(inverse_logit(y)), 0, 1) # small variations based on ϵ may cause GP values just slightly under 0 and slightly over 1, so clamp.
+
 """
 Fit Gaussian process surrogate model to results.
 """
-function gp_fit(X, Y; ν=5/2, ll=1.0, lσ=0.5, opt=false, mean=0.5)
+function gp_fit(X, Y; ν=1/2, ll=-0.1, lσ=-0.1, opt=false)
     kernel = Matern(ν, ll, lσ)
-    mean_f = MeanConst(mean)
-    gp = GP(X, Y, mean_f, kernel)
+    mean_f = MeanZero()
+    Z = apply.(Y)
+    gp = GP(X, Z, mean_f, kernel)
     opt && @suppress optimize!(gp, NelderMead())
     return gp
 end
+
 
 function gp_fit(results::Dict)
     X::Matrix = cmat([[k...] for k in collect(keys(results))])
@@ -19,7 +30,7 @@ end
 """
 Predicted GP mean and covariance, given as a vector (reshaped to a matrix)
 """
-predict_f_vec = (gp,x)->predict_f(gp, reshape(x', (2,1)))
+predict_f_vec = (gp,x)->map(y->inverse.(y), predict_f(gp, reshape(x', (2,1))))
 
 
 """
@@ -35,61 +46,69 @@ Predicted GP variance (`predict_f` outputs a [[mean], [cov]] so we want just the
 
 
 """
+Predicted GP failure (hard boundary).
+"""
+g_gp = (gp,x)->f_gp(gp,x) >= 0.5
+
+
+
+"""
 Run the GP and get the predicted output across a discretized space defined by `m[i]` points between the model ranges.
 
 **TODO**: generalize to more than 2 dimensions (NOTE: [x,y] and the "for" ordering of `y` then `x`. This is to make sure the matrix is in the same orientation for plotting with the smallest values at the bottom-left origin.)
 """
-function gp_output(gp, models::Vector{OperationalParameters}, m=fill(200, length(models)); f=f_gp, clamping=true)
-    p(x) = prod(m->pdf(m.distribution,x), models)
-    y = [f(gp, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
+function gp_output(gp, models::Vector{OperationalParameters}, m=fill(200, length(models)); f=f_gp)
+    return [f(gp, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
+end
 
-    if clamping && !isempty(gp.y)
-        # y = clamp.(y, 0, 1)
-        if !all(y .== 0)
-            y = sigmoid.(y)
-            y = normalize01(y)
-        end
-    end
-    return y
+
+"""
+Precompute the operational likelihood over entire design space in grid defined by `m`
+"""
+function p_output(models::Vector{OperationalParameters}, m=fill(200, length(models)))
+    return [pdf(models, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
 end
 
 
 """
 Upper confidence bound. Note, strictly greater than.
 """
-ucb(gp, x; λ=1, hard=false) = (hard ? f_gp(gp,x) > 0.5 : f_gp(gp,x)) + λ*σ²_gp(gp,x)
+ucb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) + λ*σ²_gp(gp,x)
 
 
 """
 Lower confidence bound. Note, strictly greater than.
 """
-lcb(gp, x; λ=1, hard=false) = (hard ? f_gp(gp,x) > 0.5 : f_gp(gp,x)) - λ*σ²_gp(gp,x)
+lcb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) - λ*σ²_gp(gp,x)
 
 
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty over entire space (using variance or stdev in surrogate).
 """
-function uncertainty_acquisition(gp, x, models::Vector{OperationalParameters}; λ=1, t=1, var=false)
+function uncertainty_acquisition(gp, x, models::Vector{OperationalParameters}; kwargs...)
     μ_σ² = predict_f_vec(gp, x)
-    σ² = μ_σ²[2][1]
-    if var
-        return λ*σ²
-    else
-        σ = sqrt(σ²)
-        return λ*σ
-    end
+    return uncertainty_acquisition(μ_σ²; kwargs...)
 end
+
+function uncertainty_acquisition(μ_σ²; var=false)
+    σ² = μ_σ²[2][1]
+    return var ? σ² : sqrt(σ²)
+end
+uncertainty_acquisition(μ_σ², p; kwargs...) = uncertainty_acquisition(μ_σ²; kwargs...)
 
 
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty around decision boundary.
 """
-function boundary_acquisition(gp, x, models::Vector{OperationalParameters}; λ=1, t=1, include_p=true, include_decay=true)
+function boundary_acquisition(gp, x, models::Vector{OperationalParameters}; kwargs...)
 	μ_σ² = predict_f_vec(gp, x)
+    return boundary_acquisition(μ_σ²; kwargs...)
+end
+
+function boundary_acquisition(μ_σ², p; λ=1, t=1, include_p=true, include_decay=true)
 	μ = μ_σ²[1][1]
 	σ = sqrt(μ_σ²[2][1])
 	μ′ = μ * (1 - μ)
-    p = prod(pdf(models[i].distribution, x[i]) for i in eachindex(models))
 
     if include_p
         if !include_decay
@@ -106,15 +125,23 @@ end
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty of failure distribution.
 """
-function operational_acquisition(gp, x, models::Vector{OperationalParameters}; λ=1, t=1)
+function failure_region_sampling_acquisition(gp, x, models::Vector{OperationalParameters}; kwargs...)
 	μ_σ² = predict_f_vec(gp, x)
+    return failure_region_sampling_acquisition(μ_σ²; kwargs...)
+end
+
+function failure_region_sampling_acquisition(μ_σ², p; λ=1, probability_valued_system=true)
 	μ = μ_σ²[1][1]
 	σ² = μ_σ²[2][1]
 	σ = sqrt(σ²)
-    p = prod(pdf(models[i].distribution, x[i]) for i in eachindex(models))
 
-    f̂ = (μ + λ*σ) > 0.5 # UCB
-    acquisition = f̂ * p
+    ĥ = (μ + λ*σ) # UCB
+    ĝ = ĥ >= 0.5 # failure indicator
+    if probability_valued_system
+        acquisition = ĝ * ĥ * p
+    else
+        acquisition = ĝ * p
+    end
 
 	return acquisition
 end
@@ -124,23 +151,17 @@ end
 Combining multi-objective acquisition functions.
 """
 function multi_objective_acqusition(gp, x, models; λ=1)
-    return operational_acquisition(gp, x, models; λ) * boundary_acquisition(gp, x, models; λ) * uncertainty_acquisition(gp, x, models; λ)
+    return failure_region_sampling_acquisition(gp, x, models; λ) * boundary_acquisition(gp, x, models; λ) * uncertainty_acquisition(gp, x, models; λ)
 end
 
 
 """
-Get the next recommended sample point based on the operational models and failure boundary.
+Get the next recommended sample point based on the acquisition function.
 """
-function get_next_point(gp, y, models; acq, acq_explore=nothing)
+function get_next_point(y, F̂, P, models; acq)
     model_ranges = get_model_ranges(models, size(y))
-    boundary_gp = gp_output(gp, models, size(y); f=acq, clamping=false)
-    if !isnothing(acq_explore)
-        explore_gp = gp_output(gp, models, size(y); f=acq_explore, clamping=false)
-        explore_gp = normalize01(explore_gp)
-        boundary_gp = normalize01(boundary_gp)
-        boundary_gp = explore_gp + boundary_gp
-    end
-    next_point = argmax(model_ranges[1], model_ranges[2], boundary_gp)
+    acq_output = map(acq, F̂, P)
+    next_point = argmax(model_ranges[1], model_ranges[2], acq_output)
     return next_point
 end
 
@@ -148,11 +169,11 @@ end
 """
 Stochastically sample next point using normalized weights.
 """
-function sample_next_point(gp, y, models; n=1, r=1, acq, return_weight=false)
-    boundary_gp = gp_output(gp, models, size(y); f=acq, clamping=false)
-    boundary_gp = normalize01(boundary_gp) # to eliminate negative weights
+function sample_next_point(y, F̂, P, models; n=1, r=1, acq, return_weight=false)
+    acq_output = map(acq, F̂, P)
+    acq_output = normalize01(acq_output) # to eliminate negative weights
     X = [[x,y] for y in range(models[2].range[1], models[2].range[end], length=size(y,2)), x in range(models[1].range[1], models[1].range[end], length=size(y,1))]
-    Z = normalize(boundary_gp .^ r, 1)
+    Z = normalize(acq_output .^ r, 1)
     if all(isnan.(Z))
         Z = ones(size(Z))
     end

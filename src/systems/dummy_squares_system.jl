@@ -20,11 +20,11 @@ else
 end
 
 if DUMMY_SYSTEM_MODELS == NormalSquareModels
-    θ1 = OperationalParameters("x", [0, 10], Normal(5, 1))
-    θ2 = OperationalParameters("y", [0, 10], Normal(5, 1))
+    θ1 = OperationalParameters("x_1", [0, 10], Normal(5, 1))
+    θ2 = OperationalParameters("x_2", [0, 10], Normal(5, 1))
 else
-    θ1 = OperationalParameters("x", [0, 10], Uniform(0, 10))
-    θ2 = OperationalParameters("y", [0, 10], Uniform(0, 10))
+    θ1 = OperationalParameters("x_1", [0, 10], Uniform(0, 10))
+    θ2 = OperationalParameters("x_2", [0, 10], Uniform(0, 10))
 end
 
 models = [θ1, θ2]
@@ -45,8 +45,8 @@ function System.generate_input(sparams::DummyParameters, sample::Vector; kwargs.
 end
 
 
-function System.evaluate(sparams::DummyParameters, inputs::Vector; kwargs...)
-    @info "Evaluating dummy system ($inputs)..."
+function System.evaluate(sparams::DummyParameters, inputs::Vector; verbose=false, kwargs...)
+    verbose && @info "Evaluating dummy system ($inputs)..."
     Y = Vector{Bool}(undef, 0)
     C_vec = sparams.failure_point
     r_vec = sparams.failure_radius
