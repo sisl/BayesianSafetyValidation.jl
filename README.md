@@ -1,45 +1,51 @@
 # BayesianSafetyValidation.jl
+<!-- [![arXiv](https://img.shields.io/badge/arXiv-2009.09043-b31b1b.svg)](https://arxiv.org/abs/2009.09043) -->
+
 Estimate the probability of failure iteratively using a Gaussian process surrogate model and importance sampling, reframing the Bayesian optimization problem as a falsification and probability estimation problem.
 
-> _Documentation forthcoming (famous last words)._
+```
+@inproceedings{moss2023bayesian,
+    title = {{Bayesian Safety Validation for Black-Box Systems}},
+    author = {Robert J. Moss and Mykel J. Kochenderfer and Maxime Gariel and Arthur Dubois},
+    booktitle = {{AIAA AVIATION Forum}},
+    year = {2023},
+}
+```
 
-<img src="./media/diagram.svg">
+<img src="./media/diagram.png">
 
 ## Installation
-### Dependencies
-- Install [Julia](https://julialang.org/). For example with Ubuntu:
-    ```bash
-    cd ~
-    wget https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.3-linux-x86_64.tar.gz
-    tar xvzf julia-1.8.3-linux-x86_64.tar.gz
-    export PATH="${PATH}:${HOME}/julia-1.8.3/bin/"
-    ```
-- Install the [QtWayland](https://wiki.qt.io/QtWayland) module:
-    ```
-    sudo apt install qtwayland5
-    ```
-### Package
-Start Julia from the repository root: `julia`
-- Enter [Pkg.jl REPL mode](https://docs.julialang.org/en/v1/stdlib/REPL/#Pkg-mode) by typing `]`
-- Create a Julia environment for this package: `activate .`
-- Install dependencies `instantiate`
 
-## Usage
-A good starting point is to run the examples:
+```julia
+] add https://github.com/sisl/BayesianSafetyValidation.jl
 ```
-julia --project=. ./scripts/example.jl
+
+## Example usage
+
+```julia
+using BayesianSafetyValidation
+
+@with_kw mutable struct ExampleSystem <: System.SystemParameters
+    x1c = 2
+    x2c = 5
+end
+
+System.generate_input(sparams::ExampleSystem, sample::Vector; kwargs...) = sample # pass-through
+function System.reset(::ExampleSystem) end
+function System.initialize(; kwargs...) end
+function System.evaluate(sparams::ExampleSystem, inputs::Vector; kwargs...)
+    return [x[1] ≥ sparams.x1c && x[2] ≥ sparams.x2c for x in inputs]
+end
+
+system_params = ExampleSystem()
+px1 = OperationalParameters("distance", [0.1, 4], TruncatedNormal(0, 1.0, 0, 4))
+px2 = OperationalParameters("slope", [1, 7], Normal(3, 0.5))
+model = [px1, px2]
+
+surrogate  = bayesian_safety_validation(system_params, model; T=30)
+X_failures = falsification(surrogate.x, surrogate.y)
+ml_failure = most_likely_failure(surrogate.x, surrogate.y, model)
+p_failure  = p_estimate(surrogate, model)
 ```
 
 <img src="./media/example_plot.png">
-
-Example output:
-```bash
-[ Info: Refinement iteration 1 (acquisition 1)
-[ Info: Refinement iteration 1 (acquisition 2)
-[ Info: Refinement iteration 1 (acquisition 3)
-[ Info: Evaluating dummy linear system (Any[[0.0, 0.0], [4.974874371859296, 4.974874371859296], [4.773869346733668, 4.321608040201005]])...
-[ Info: Refinement iteration 2 (acquisition 1)
-[ Info: Refinement iteration 2 (acquisition 2)
-[ Info: Refinement iteration 2 (acquisition 3)
-...
-```
