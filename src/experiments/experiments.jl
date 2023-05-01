@@ -7,7 +7,7 @@ function run_experiment(sparams, models; T=200, seed=0, record_every=10, show_pl
         if skip_gp
             samples_to_run = min(samples_to_run + 3record_every, 3T)
         else
-            @time gp = iteratively_sample(sparams, models;
+            @time gp = bayesian_safety_validation(sparams, models;
                 seed=seed,
                 gp=gp, # continue from last GP
                 T=record_every)

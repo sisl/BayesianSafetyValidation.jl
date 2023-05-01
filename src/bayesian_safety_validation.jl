@@ -1,8 +1,7 @@
-# TODO: rename to `bayesian_safety_validation`, same with package to BayesianSafetyValidation.
 """
 Main algorithm: iterative sample points and re-fit the Gaussian process surrogate model.
 """
-function iteratively_sample(sparams, models;
+function bayesian_safety_validation(sparams, models;
                             gp=nothing,
                             T=1,
                             λ=0.1, # UCB
@@ -209,7 +208,7 @@ function iteratively_sample(sparams, models;
 
         return gp
     catch err
-        alert("Error in `iteratively_sample`!")
+        alert("Error in `bayesian_safety_validation`!")
         rethrow(err)
     end
 end

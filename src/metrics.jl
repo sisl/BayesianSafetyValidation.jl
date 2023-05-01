@@ -39,7 +39,7 @@ most_likely_failure_likelihood(gp, models) = maximum([pdf(models, gp.x[:,i]) * (
 Return all failures.
 """
 falsification(gp) = falsification(gp.x, gp.y)
-falsification(x, y) = x[:, y]
+falsification(x, y) = x[:, y .>= 0]
 
 
 function region_characterization(gp, models, sparams; m=[200,200], failures_only=false)

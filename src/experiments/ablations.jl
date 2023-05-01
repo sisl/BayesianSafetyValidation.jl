@@ -16,7 +16,7 @@ function run_acquisition_ablation(sparams, models; T=200, seed=0, record_every=1
         results[acqs] = []
         while true
             T_intermediate = isnothing(gp) ? min(record_every, 3T÷length(acqs)) : min(record_every, (3T - length(gp.y))÷length(acqs))
-            @time gp = iteratively_sample(sparams, models;
+            @time gp = bayesian_safety_validation(sparams, models;
                 seed=seed,
                 gp=gp, # continue from last GP
                 T=T_intermediate,

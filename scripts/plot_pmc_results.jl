@@ -1,5 +1,5 @@
 using Revise
-using BayesianFailureProbability
+using BayesianSafetyValidation
 using BSON
 using Plots; default(fontfamily="Computer Modern", framestyle=:box)
 

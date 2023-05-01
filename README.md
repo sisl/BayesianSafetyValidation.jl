@@ -1,4 +1,4 @@
-# BayesianFailureProbability.jl
+# BayesianSafetyValidation.jl
 Estimate the probability of failure iteratively using a Gaussian process surrogate model and importance sampling, reframing the Bayesian optimization problem as a falsification and probability estimation problem.
 
 > _Documentation forthcoming (famous last words)._
@@ -27,7 +27,7 @@ Start Julia from the repository root: `julia`
 ## Usage
 A good starting point is to run the examples:
 ```
-julia --project=. ./src/example.jl
+julia --project=. ./scripts/example.jl
 ```
 
 <img src="./media/example_plot.png">

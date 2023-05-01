@@ -382,17 +382,19 @@ function plot_surrogate_truth_combined(gp, models, sparams; m=[200,200], latex_l
         # ratio2 = ratio2 / 4
         lo = @layout([_ a{0.30h} _ _ _; b{0.09677419354838711w} c{0.22580645161290325w} d{0.22580645161290325w} e{0.22580645161290325w} f{0.22580645161290325w}])
         plot(plt_model1, plt_model2, plt_surrogate_soft, plt_truth_soft, plt_surrogate_hard, plt_truth_hard, layout=lo, size=(400*0.3 + 400*0.7*4,400))
-        contourf!([0], [0], (x,y)->0,
-            clims=(0,1), levels=10, c=COLOR_FAIL,
-            ytick=true, # Hack, which is trimmed anyhow.
-            bg_inside=nothing,
-            subplot=2,
-            axis=false,
-            label=false,
-            grid=false,
-            tickfont=:black, # Important. We set to :white for hidden plt_model2 above.
-            ytickfontsize=12,
-        )
+        if hide_model
+            contourf!([0], [0], (x,y)->0,
+                clims=(0,1), levels=10, c=COLOR_FAIL,
+                ytick=true, # Hack, which is trimmed anyhow.
+                bg_inside=nothing,
+                subplot=2,
+                axis=false,
+                label=false,
+                grid=false,
+                tickfont=:black, # Important. We set to :white for hidden plt_model2 above.
+                ytickfontsize=12,
+            )
+        end
         return plot!()
     else
         # TODO?

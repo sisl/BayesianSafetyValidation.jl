@@ -1,6 +1,6 @@
 using Revise
 using BSON
-using BayesianFailureProbability
+using BayesianSafetyValidation
 using Plots; default(fontfamily="Computer Modern", framestyle=:box)
 
 !isdir("truths") && mkdir("truths")

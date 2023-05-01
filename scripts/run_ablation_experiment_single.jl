@@ -1,5 +1,5 @@
 using Revise
-using BayesianFailureProbability
+using BayesianSafetyValidation
 using BSON
 
 include(joinpath(@__DIR__, "../src/systems/dummy_squares_system.jl"))

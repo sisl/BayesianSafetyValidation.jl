@@ -1,4 +1,4 @@
-module BayesianFailureProbability
+module BayesianSafetyValidation
 
 using Reexport
 using Alert
@@ -28,7 +28,7 @@ include("experiments/experiments.jl")
 include("experiments/baselines.jl")
 include("experiments/ablations.jl")
 include("experiments/pmc.jl")
-include("iteratively_sample.jl")
+include("bayesian_safety_validation.jl")
 
 using .System
 
@@ -140,7 +140,7 @@ export
     plot_ablation,
     ablation_latex_table,
 
-    ## iteratively_sample.jl
-    iteratively_sample
+    ## bayesian_safety_validation.jl
+    bayesian_safety_validation
 
 end # module
