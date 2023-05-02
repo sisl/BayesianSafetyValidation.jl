@@ -48,4 +48,8 @@ ml_failure = most_likely_failure(surrogate.x, surrogate.y, model)
 p_failure  = p_estimate(surrogate, model)
 ```
 
+## Visualizations
+
+Below is an example from `src/systems/dummy_booth_system.jl`:
+
 <img src="./media/example_plot.png">
