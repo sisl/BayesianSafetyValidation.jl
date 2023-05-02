@@ -397,7 +397,6 @@ function plot_surrogate_truth_combined(gp, models, sparams; m=[200,200], latex_l
         end
         return plot!()
     else
-        # TODO?
         lo = @layout([_ a{0.25h} _; b{0.18w} c{0.45w} d{0.1w}])
         return plot(plt_model1, plt_model2, plt_main, plt_cbar, layout=lo)
     end

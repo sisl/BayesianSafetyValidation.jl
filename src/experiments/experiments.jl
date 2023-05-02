@@ -243,7 +243,6 @@ function experiments_latex_table(cr)
     for k in names
         data = cr[end][k] # last iteration
         num_samples, μ_err, σ_err, μ_est, σ_est, μ_nfail, σ_nfail, μ_rfail, σ_rfail, μ_mlfl, σ_mlfl, μ_coverage, σ_coverage, μ_region, σ_region = data
-        # TODO: arrows
         table *= "\$$(k)\$  &  \$$(rd(μ_rfail))\$  &  \$$(rd(μ_mlfl))\$  &  \$$(rd(μ_err))\$  &  \$$(rd(μ_coverage))\$  &  \$$(rd4(μ_region))\$  \\\\\n"
     end
     return table
