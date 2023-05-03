@@ -130,21 +130,29 @@ ABLATION_STYLES = Dict(
     [1,2,3]=>(ls=:solid, c=:black, label="ue, br, frs"),
 )
 
-function plot_ablation(ar; hold=false, use_log=false, plot_pfail=false, apply_smoothing=false, title="", acqs_set=[[1], [2], [3], [1,2], [2,3], [1,3], [1,2,3]], label=nothing, c=nothing, show_error=true, use_stderr=true)
+function plot_ablation(ar; hold=false, use_log=false, plot_pfail=false, apply_smoothing=false, title="", acqs_set=[[1], [2], [3], [1,2], [2,3], [1,3], [1,2,3]], label=nothing, c=nothing, show_error=true, use_stderr=false, relative_error=true, truth=1)
     hold ? plot!() : plot()
     yf = use_log ? log : y->y
     for k in acqs_set
         X = map(d->d[1], ar[k])
-        Y = map(d->yf(d[plot_pfail ? 4 : 2]), ar[k])
+        Y = map(d->begin
+            μ = yf(d[plot_pfail ? 4 : 2])
+            μ = relative_error ? μ/truth : μ
+            μ
+        end, ar[k])
         σerr = map(d->begin
             μ = yf(d[plot_pfail ? 4 : 2])
             σ = yf(d[plot_pfail ? 5 : 3])
+            if relative_error
+                μ = μ / truth
+                σ = σ / truth
+            end
             if use_stderr
                 σ = σ / sqrt(d[1])
             end
             if μ - σ <= 0
                 # Fix log-scale ribbon issues
-                σ = μ - 1.1e-5
+                σ = μ - 1.0e-3
             end
             σ
         end, ar[k])
@@ -163,7 +171,7 @@ function plot_ablation(ar; hold=false, use_log=false, plot_pfail=false, apply_sm
             plot!(X, Y; lw=1, alpha=0.3, style..., label=false)
         end
         Y = apply_smoothing ? smooth(Y) : Y
-        plot!(X, Y, ribbon=show_error ? σerr : nothing, fillalpha=0.1; lw=2, style...)
+        plot!(X, Y, ribbon=show_error ? σerr : nothing, fillalpha=0.05; lw=2, style...)
         if show_error
             plot!(X, Y .+ σerr; lw=1, alpha=0.5, style..., label=false)
             plot!(X, Y .- σerr; lw=1, alpha=0.5, style..., label=false)
@@ -173,16 +181,26 @@ function plot_ablation(ar; hold=false, use_log=false, plot_pfail=false, apply_sm
 end
 
 
-function ablation_latex_table(ar; acqs_set=[[1], [2], [3], [1,2], [2,3], [1,3], [1,2,3]])
+function ablation_latex_table(ar, sparams=nothing, models=nothing; acqs_set=[[1], [2], [3], [1,2], [2,3], [1,3], [1,2,3]], relative_error=true)
+    if relative_error
+        truth = truth_estimate(sparams, models)
+    else
+        truth = 1 # divisor
+    end
     table = ""
     rd = x->round(x; sigdigits=3)
     rd4 = x->round(x; sigdigits=4)
+    rd5 = x->round(x; sigdigits=5)
 
     for k in acqs_set
         data = ar[k][end] # last iteration
         num_samples, μ_err, σ_err, μ_est, σ_est, μ_nfail, σ_nfail, μ_rfail, σ_rfail, μ_mlfl, σ_mlfl, μ_coverage, σ_coverage, μ_region, σ_region = data
+        if relative_error
+            μ_err = μ_err / truth
+            σ_err = σ_err / truth
+        end
         tab = length(k) == 1 ? "\t\t" : "\t"
-        table *= "\$$(k)\$  $tab&  \$$(rd(μ_rfail))\$  \t&  \$$(rd(μ_mlfl))\$  \t&  \$$(rd(μ_err))\$  \t&  \$$(rd(μ_coverage))\$  \t&  \$$(rd4(μ_region))\$  \\\\\n"
+        table *= "\$$(k)\$  $tab&  \$$(rd(μ_rfail))\$  \t&  \$$(rd(μ_mlfl))\$  \t&  \$$(rd5(μ_err))\$  \t&  \$$(rd(μ_coverage))\$  \t&  \$$(rd4(μ_region))\$  \\\\\n"
     end
     return table
 end

@@ -15,7 +15,7 @@ end
 
 @info "Booth"
 include("../src/systems/dummy_booth_system.jl")
-BSON.@load "ablation_booth_T333_rng3_every10_final.bson" ar_booth
+BSON.@load joinpath(@__DIR__, "../data/ablation_booth_T333_rng3_every10_final.bson") ar_booth
 res_pmc, res_mc = run_pmc_experiment(system_params, models)
 plot_estimate_curves(ar_booth, res_pmc, res_mc, system_params, models)
 title!("\\textsc{Representative}")
@@ -27,7 +27,7 @@ end
 
 @info "Squares"
 include("../src/systems/dummy_squares_system.jl")
-BSON.@load "ablation_squares_T333_rng3_every10_final.bson" ar_squares
+BSON.@load joinpath(@__DIR__, "../data/ablation_squares_T333_rng3_every10_final.bson") ar_squares
 res_pmc, res_mc = run_pmc_experiment(system_params, models)
 plot_estimate_curves(ar_squares, res_pmc, res_mc, system_params, models)
 title!("\\textsc{Squares}")
@@ -39,7 +39,7 @@ end
 
 @info "Himmelblau"
 include("../src/systems/dummy_himmelblau_system.jl")
-BSON.@load "ablation_himmelblau_T333_rng3_every10_final.bson" ar_himmelblau
+BSON.@load joinpath(@__DIR__, "../data/ablation_himmelblau_T333_rng3_every10_final.bson") ar_himmelblau
 res_pmc, res_mc = run_pmc_experiment(system_params, models)
 plot_estimate_curves(ar_himmelblau, res_pmc, res_mc, system_params, models)
 title!("\\textsc{Mixture}")

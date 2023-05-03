@@ -61,13 +61,19 @@ function region_characterization(gp, models, sparams; m=[200,200], failures_only
 end
 
 
-function compute_metrics(gp, models, sparams; compute_truth=true)
+function compute_metrics(gp, models, sparams; compute_truth=true, relative_error=true)
     est = p_estimate(gp, models)
 
     if compute_truth
         truth = truth_estimate(sparams, models)
-        gp_error = est - truth
-        @info "p(fail) error: $gp_error"
+        gp_error = abs(est - truth)
+        @info "p(fail) estimate: $est"
+        if relative_error
+            gp_error = gp_error / truth
+            @info "p(fail) relative error: $gp_error"
+        else
+            @info "p(fail) error: $gp_error"
+        end
     else
         @info "p(fail) estimate: $est"
     end

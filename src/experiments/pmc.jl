@@ -85,21 +85,40 @@ function run_pmc_experiment(sparams, models; kwargs...)
 end
 
 
-function plot_estimate_curves(ar, res_pmc, res_mc, system_params, models)
+function plot_estimate_curves(ar, res_pmc, res_mc, system_params, models; relative_error=true, use_stderr=true)
     truth = truth_estimate(system_params, models)
 
     X_mc = deepcopy(res_mc[1])
     Y_mc = abs.(truth .- first.(res_mc[2]))
     Y_mc_err = first.(res_mc[3])
+    if !use_stderr
+        Y_mc_err = Y_mc_err .* sqrt.(X_mc)
+    end
 
     X_pmc = deepcopy(res_pmc[1])
     Y_pmc = abs.(truth .- first.(res_pmc[2]))
     Y_pmc_err = first.(res_pmc[3])
+    if !use_stderr
+        Y_pmc_err = Y_pmc_err .* sqrt.(X_pmc)
+    end
 
     X_bsv = map(r->r[1], ar[[1,2,3]])
     Y_bsv = map(r->r[2], ar[[1,2,3]])
     Y_bsv_err = map(r->r[3], ar[[1,2,3]])
-    Y_bsv_err = Y_bsv_err ./ sqrt.(X_bsv) # convert to stderr
+    if use_stderr
+        Y_bsv_err = Y_bsv_err ./ sqrt.(X_bsv) # convert to stderr
+    end
+
+    if relative_error
+        Y_mc = Y_mc ./ truth
+        Y_mc_err = Y_mc_err ./ truth
+
+        Y_pmc = Y_pmc ./ truth
+        Y_pmc_err = Y_pmc_err ./ truth
+
+        Y_bsv = Y_bsv ./ truth
+        Y_bsv_err = Y_bsv_err ./ truth
+    end
 
     plot()
 
@@ -115,6 +134,6 @@ function plot_estimate_curves(ar, res_pmc, res_mc, system_params, models)
     plot!(X_bsv, Y_bsv + Y_bsv_err, lw=1, alpha=0.5, label=false, c=:darkgreen)
     plot!(X_bsv, Y_bsv - Y_bsv_err, lw=1, alpha=0.5, label=false, c=:darkgreen)
 
-    plot!(xlabel="number of samples", ylabel="absolute error")
+    plot!(xlabel="number of samples", ylabel=relative_error ? "relative error" : "absolute error")
     plot!(xticks=[1, 10, 100, 1000, 10_000, 100_000, 1_000_000], xaxis=:log, size=(700,300), margin=3Plots.mm)
 end

@@ -99,7 +99,7 @@ BASELINE_LABEL_STYLE = Dict(
 )
 
 
-function plot_experiment_error(results; is_combined=false, show_ribbon=true, colors=nothing, apply_smoothing=false, use_stderr=true)
+function plot_experiment_error(results; is_combined=false, show_ribbon=true, colors=nothing, apply_smoothing=false, use_stderr=false, relative_error=true, truth=1)
     plot()
     names = keys(first(results)) # same keys throughout
     for (i,k) in enumerate(names)
@@ -110,15 +110,21 @@ function plot_experiment_error(results; is_combined=false, show_ribbon=true, col
         for r in eachindex(results)
             if is_combined
                 x, μ, σ, _, _ = results[r][k]
-                push!(Y, abs(μ))
+                if relative_error
+                    y = abs(μ)/truth
+                    σ = σ/truth
+                else
+                    y = abs(μ)
+                end
+                push!(Y, y)
                 if show_ribbon
                     error_value = σ
                     if use_stderr
                         error_value = error_value/sqrt(x)
                     end
-                    if μ - error_value <= 0
+                    if y - error_value <= 0
                         # Fix log-scale ribbon issues
-                        error_value = μ - 1.1e-5
+                        error_value = y - 1.0e-3
                     end
                     push!(ribbon, error_value)
                 end
@@ -136,7 +142,7 @@ function plot_experiment_error(results; is_combined=false, show_ribbon=true, col
 
         Y = apply_smoothing ? smooth(Y) : Y
         ribbon = apply_smoothing ? smooth(ribbon) : ribbon
-        plot!(X, Y, ribbon=isempty(ribbon) ? nothing : ribbon, fillalpha=0.1, label=BASELINE_LABEL_STYLE[k], lw=2, c=isnothing(colors) ? i : colors[i])
+        plot!(X, Y, ribbon=isempty(ribbon) ? nothing : ribbon, fillalpha=0.05, label=BASELINE_LABEL_STYLE[k], lw=2, c=isnothing(colors) ? i : colors[i])
         plot!(X, Y .+ ribbon; lw=1, alpha=0.5, c=colors[i], label=false)
         plot!(X, Y .- ribbon; lw=1, alpha=0.5, c=colors[i], label=false)
     end
@@ -207,13 +213,14 @@ end
 BASELINE_COLS = distinguishable_colors(12, [RGB(1,1,1), RGB(0,0,0)], dropseed=true)
 BASELINE_PCOLS = map(col -> RGB(red(col), green(col), blue(col)), BASELINE_COLS)
 
-function plot_combined_ablation_and_baseline_results(ar, cr; apply_smoothing=false)
+function plot_combined_ablation_and_baseline_results(ar, cr, sparams=nothing, models=nothing; apply_smoothing=true, relative_error=true)
     colors = cgrad(:Set1_5, 5, categorical=true)[[1,2,4,5]] # [:magenta, :blue, :red, :cyan]
-    plot_experiment_error(cr; is_combined=true, colors=colors, apply_smoothing)
-    plot_ablation(ar; acqs_set=[[1,2,3]], hold=true, label="FSAR", c=:darkgreen, apply_smoothing)
+    truth = relative_error ? truth_estimate(sparams, models) : 0
+    plot_experiment_error(cr; is_combined=true, colors=colors, apply_smoothing, relative_error, truth)
+    plot_ablation(ar; acqs_set=[[1,2,3]], hold=true, label="FSAR", c=:darkgreen, apply_smoothing, relative_error, truth)
     plot!(
         xlabel="number of samples",
-        ylabel="absolute error",
+        ylabel=relative_error ? "relative error" : "absolute error",
         size=(700,300),
         yaxis=:log,
         margin=5Plots.mm
@@ -235,15 +242,25 @@ function plot_combined_ablation_and_baseline_estimate(ar, cr)
 end
 
 
-function experiments_latex_table(cr)
+function experiments_latex_table(cr, sparams=nothing, models=nothing; relative_error=true)
+    if relative_error
+        truth = truth_estimate(sparams, models)
+    else
+        truth = 1 # divisor
+    end
     table = ""
     rd = x->round(x; sigdigits=3)
     rd4 = x->round(x; sigdigits=4)
+    rd5 = x->round(x; sigdigits=5)
     names = keys(first(cr))
     for k in names
         data = cr[end][k] # last iteration
         num_samples, μ_err, σ_err, μ_est, σ_est, μ_nfail, σ_nfail, μ_rfail, σ_rfail, μ_mlfl, σ_mlfl, μ_coverage, σ_coverage, μ_region, σ_region = data
-        table *= "\$$(k)\$  &  \$$(rd(μ_rfail))\$  &  \$$(rd(μ_mlfl))\$  &  \$$(rd(μ_err))\$  &  \$$(rd(μ_coverage))\$  &  \$$(rd4(μ_region))\$  \\\\\n"
+        if relative_error
+            μ_err = μ_err / truth
+            σ_err = σ_err / truth
+        end
+        table *= "\$$(k)\$  &  \$$(rd(μ_rfail))\$  &  \$$(rd(μ_mlfl))\$  &  \$$(rd5(μ_err))\$  &  \$$(rd(μ_coverage))\$  &  \$$(rd4(μ_region))\$  \\\\\n"
     end
     return table
 end
