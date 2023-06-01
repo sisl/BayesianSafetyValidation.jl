@@ -9,12 +9,13 @@ end
 @enum DummySystemSquaresConfig SingleSquare MultipleSquares
 @enum DummySystemSquaresModels NormalSquareModels UniformSquareModels
 
-DUMMY_SYSTEM_CONFIG = MultipleSquares
-DUMMY_SYSTEM_MODELS = NormalSquareModels
-
+DUMMY_SYSTEM_CONFIG = SingleSquare
+DUMMY_SYSTEM_MODELS = UniformSquareModels
+# DUMMY_SYSTEM_CONFIG = MultipleSquares
+# DUMMY_SYSTEM_MODELS = NormalSquareModels
 
 if DUMMY_SYSTEM_CONFIG == SingleSquare
-    system_params = DummyParameters(failure_point=[[3,3]], failure_radius=[1])
+    system_params = DummyParameters(failure_point=[[1,6]], failure_radius=[1])
 else
     system_params = DummyParameters(failure_point=[[2, 2], [8, 8]], failure_radius=[1, 1/2])
 end
@@ -22,12 +23,14 @@ end
 if DUMMY_SYSTEM_MODELS == NormalSquareModels
     θ1 = OperationalParameters("x_1", [0, 10], Normal(5, 1))
     θ2 = OperationalParameters("x_2", [0, 10], Normal(5, 1))
+    models = [θ1, θ2]
 else
     θ1 = OperationalParameters("x_1", [0, 10], Uniform(0, 10))
     θ2 = OperationalParameters("x_2", [0, 10], Uniform(0, 10))
+    # θ3 = OperationalParameters("x_3", [0, 10], Uniform(0, 10))
+    models = [θ1, θ2]
 end
 
-models = [θ1, θ2]
 
 
 ###########################################################
@@ -55,8 +58,10 @@ function System.evaluate(sparams::DummyParameters, inputs::Vector; verbose=false
         for i in eachindex(C_vec)
             C = C_vec[i]
             r = r_vec[i]
-            x, y = input
-            local_failure = (C[1] - r <= x <= C[1] + r) && (C[2] - r <= y <= C[2] + r)
+            local_failure = true
+            for d in 1:length(C)
+                local_failure &= C[d] - r ≤ input[d] ≤ C[d] + r
+            end
             failure = failure || local_failure
         end
         push!(Y, failure)

@@ -7,10 +7,10 @@ cmat(V) = [V[i][j] for j in 1:length(V[1]), i in 1:length(V)]
 """
 Get argument that maximizes across 2D (x,y) space.
 """
-function Base.argmax(X, Y, Z)
-	z = argmax(Z).I
-	return [X[z[2]], Y[z[1]], Z[z[1], z[2]]]
-end
+# function Base.argmax(X, Y, Z)
+# 	z = argmax(Z).I
+# 	return [X[z[2]], Y[z[1]], Z[z[1], z[2]]]
+# end
 
 
 function create_gif(plots_dir, output_gif; delay=100, resize=20)

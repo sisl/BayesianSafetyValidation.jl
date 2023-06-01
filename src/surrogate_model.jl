@@ -30,7 +30,7 @@ end
 """
 Predicted GP mean and covariance, given as a vector (reshaped to a matrix)
 """
-predict_f_vec = (gp,x)->map(y->inverse.(y), predict_f(gp, reshape(x', (2,1))))
+predict_f_vec = (gp,x)->map(y->inverse.(y), predict_f(gp, reshape(x', (:,1))))
 
 
 """
@@ -51,6 +51,20 @@ Predicted GP failure (hard boundary).
 g_gp = (gp,x)->f_gp(gp,x) >= 0.5
 
 
+function make_broadcastable_grid(models::Vector{OperationalParameters}, m)
+    ranges = [range(model.range[1], model.range[end], length=l) for (model, l) in zip(models, m)]
+    X = []
+    for (i, r) in enumerate(ranges)
+        dims = [fill(1, i-1)..., :, fill(1, length(models) - i)...]
+        push!(X, reshape(Vector(r), dims...))
+    end
+
+    return X
+end
+
+function apply_as_list(f, x...)
+    return f([x...])
+end
 
 """
 Run the GP and get the predicted output across a discretized space defined by `m[i]` points between the model ranges.
@@ -58,7 +72,11 @@ Run the GP and get the predicted output across a discretized space defined by `m
 **TODO**: generalize to more than 2 dimensions (NOTE: [x,y] and the "for" ordering of `y` then `x`. This is to make sure the matrix is in the same orientation for plotting with the smallest values at the bottom-left origin.)
 """
 function gp_output(gp, models::Vector{OperationalParameters}, m=fill(200, length(models)); f=f_gp)
-    return [f(gp, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
+    X = make_broadcastable_grid(models, m)
+
+    g = (x...)->apply_as_list((x...)->f(gp, x...), x...)
+    return g.(X...)
+    # return [f(gp, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
 end
 
 
@@ -66,7 +84,10 @@ end
 Precompute the operational likelihood over entire design space in grid defined by `m`
 """
 function p_output(models::Vector{OperationalParameters}, m=fill(200, length(models)))
-    return [pdf(models, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
+    X = make_broadcastable_grid(models, m)
+
+    g = (x...)->apply_as_list((x...)->pdf(models, x...), x...)
+    return g.(X...)
 end
 
 
@@ -161,7 +182,8 @@ Get the next recommended sample point based on the acquisition function.
 function get_next_point(y, F̂, P, models; acq)
     model_ranges = get_model_ranges(models, size(y))
     acq_output = map(acq, F̂, P)
-    next_point = argmax(model_ranges[1], model_ranges[2], acq_output)
+    next_point = [model_ranges[i][x] for (i, x) in enumerate(argmax(acq_output).I)]
+    push!(next_point, acq_output[argmax(acq_output)])
     return next_point
 end
 
@@ -172,7 +194,9 @@ Stochastically sample next point using normalized weights.
 function sample_next_point(y, F̂, P, models; n=1, r=1, acq, return_weight=false)
     acq_output = map(acq, F̂, P)
     acq_output = normalize01(acq_output) # to eliminate negative weights
-    X = [[x,y] for y in range(models[2].range[1], models[2].range[end], length=size(y,2)), x in range(models[1].range[1], models[1].range[end], length=size(y,1))]
+    # X = [[x,y] for y in range(models[2].range[1], models[2].range[end], length=size(y,2)), x in range(models[1].range[1], models[1].range[end], length=size(y,1))]
+    ranges = make_broadcastable_grid(models, size(y))
+    X = broadcast((x...)->[x...], ranges...)
     Z = normalize(acq_output .^ r, 1)
     if all(isnan.(Z))
         Z = ones(size(Z))

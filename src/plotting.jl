@@ -1,16 +1,14 @@
 default(fontfamily="Computer Modern", framestyle=:box, palette=palette(:darkrainbow))
 
 COLOR_FAIL = cgrad([:green, :white, :red])
-COLOR_FAIL3 = cgrad([:green, :white, :red], categorical=3)
+COLOR_FAIL3 = cgrad([:green, :white, :red], categorical=true)
 
 
 """
 Get ranges of the model used by the predicted output `y` of the GP.
 """
 function get_model_ranges(models, m=[200,200])
-    model_1_range = range(models[1].range[1], models[1].range[end], length=m[1])
-    model_2_range = range(models[2].range[1], models[2].range[end], length=m[2])
-    return [model_1_range, model_2_range]
+    return [range(model.range[1], model.range[end], length=l) for (model, l) in zip(models, m)]
 end
 
 
@@ -35,7 +33,7 @@ Plot prediction of the GP as a soft decision boundary between [0,1].
 function plot_soft_boundary(gp, models; m=[200,200], show_data=true, overlay=false, overlay_levels=50, ms=4, lw=0, tight=false) # lw=0.2
     y = gp_output(gp, models, m)
     model_ranges = get_model_ranges(models, size(y))
-    contourf(model_ranges[1], model_ranges[2], y; c=COLOR_FAIL, lc=:black, lw=lw, clims=(0,1))
+    contourf(model_ranges[1], model_ranges[2], y'; c=COLOR_FAIL, lc=:black, lw=lw, clims=(0,1))
     if overlay
         p(x,y) = pdf(models[1].distribution, x) * pdf(models[2].distribution, y)
         @suppress contour!(model_ranges[1], model_ranges[2], p, c=cgrad([:gray, :black, :black, :white], 10, categorical=true, scale=:exp, rev=false), levels=overlay_levels)
@@ -119,7 +117,7 @@ function plot_acquisition(y, F̂, P, models; acq, zero_white=false, return_point
     if zero_white
         acq_output[acq_output .== 0] .= NaN
     end
-    contourf(model_ranges[1], model_ranges[2], acq_output, c=:viridis, lc=:black, lw=lw, fill=!zero_white)
+    contourf(model_ranges[1], model_ranges[2], acq_output', c=:viridis, lc=:black, lw=lw, fill=!zero_white)
     if show_point
         if isnothing(given_next_point)
             # get max from acquisition function to show as next point

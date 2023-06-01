@@ -34,7 +34,7 @@ function bayesian_safety_validation(sparams, models;
             reset_system && System.reset(sparams)
 
             inputs = []
-            X = Matrix{Float64}(undef, 2, 0)
+            X = Matrix{Float64}(undef, length(models), 0)
             Y = Float64[]
 
             #= Surrogate modeling =#
