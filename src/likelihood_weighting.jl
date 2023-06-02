@@ -1,21 +1,19 @@
 """
 p(fail) estimate across uniform space of the Gaussian process.
 """
-function p_estimate(gp, models; m=fill(500, length(models)), grid=true)
-    a₁, b₁ = models[1].range[1], models[1].range[end]
-    a₂, b₂ = models[2].range[1], models[2].range[end]
+function p_estimate(gp, models; num_steps=500, m=fill(num_steps, length(models)), grid=true)
     if grid
-        θ₁ = range(a₁, b₁, length=m[1]) # discrete grid
-        θ₂ = range(a₂, b₂, length=m[2]) # discrete grid
-        w = [pdf(models[1].distribution, x1)*pdf(models[2].distribution, x2) for x1 in θ₁ for x2 in θ₂]
+        X = make_broadcastable_grid(models, m)
+        w = broadcast((x...)->reduce(*, [pdf(model.distribution, xx) for (xx, model) in zip(x, models)]), X...)
     else
-        U₁ = Uniform(a₁, b₁)
-        U₂ = Uniform(a₂, b₂)
-        θ₁ = rand(U₁, m[1])
-        θ₂ = rand(U₂, m[2])
-        w = [(pdf(models[1].distribution, x1)*pdf(models[2].distribution, x2)) / (pdf(U₁, x1)*pdf(U₂, x2)) for x1 in θ₁ for x2 in θ₂]
+        U = [Uniform(model.range[1], model.range[end]) for model in models]
+        X = [rand(u, n) for (u, n) in zip(U, m)]
+        X = make_broadcastable_grid(X)
+        w = broadcast((x...)->reduce(*, [pdf(model.distribution, xx) / pdf(u, xx) for (xx, model, u) in zip(x, models, U)]), X...)
     end
-    Y = [g_gp(gp, [x1,x2]) for x1 in θ₁ for x2 in θ₂]
+    w = reshape(w, :)
+    Y = broadcast((x...)->g_gp(gp, [x...]), X...)
+    Y = reshape(Y, :)
     if grid
         return w'Y / sum(w)
     else
@@ -49,19 +47,14 @@ end
 p(fail) estimate across gridded space of the Gaussian process without using the operational likelihood model (i.e., this is failure rate over the GP output across the domain).
 """
 function p_estimate_naive(gp, models; m=fill(500, length(models)), grid=true)
-    a₁, b₁ = models[1].range[1], models[1].range[end]
-    a₂, b₂ = models[2].range[1], models[2].range[end]
     if grid
-        θ₁ = range(a₁, b₁, length=m[1]) # discrete grid
-        θ₂ = range(a₂, b₂, length=m[2]) # discrete grid
-        w = [pdf(models[1].distribution, x1)*pdf(models[2].distribution, x2) for x1 in θ₁ for x2 in θ₂]
+        X = make_broadcastable_grid(models, m)
     else
-        U₁ = Uniform(a₁, b₁)
-        U₂ = Uniform(a₂, b₂)
-        θ₁ = rand(U₁, m[1])
-        θ₂ = rand(U₂, m[2])
+        U = [Uniform(model.range[1], model.range[end]) for model in models]
+        X = [rand(u, n) for (u, n) in zip(U, m)]
+        X = make_broadcastable_grid(X)
     end
-    Y = [g_gp(gp, [x1,x2]) for x1 in θ₁ for x2 in θ₂]
+    Y = broadcast((x...)->g_gp(gp, [x...]), X...)
     return mean(Y)
 end
 

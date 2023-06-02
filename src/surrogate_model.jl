@@ -51,42 +51,43 @@ Predicted GP failure (hard boundary).
 g_gp = (gp,x)->f_gp(gp,x) >= 0.5
 
 
+"""
+Given a vector of operational parameters and an equal length vector of grid discritization values,
+return a vector of inputs, with dimensions appropriate for broadcasting over the dense N-dimensional
+input space.  This is useful for applying a function over the full input space, without having to
+construct the full N-dimensional input array.
+"""
 function make_broadcastable_grid(models::Vector{OperationalParameters}, m)
     ranges = [range(model.range[1], model.range[end], length=l) for (model, l) in zip(models, m)]
-    X = []
-    for (i, r) in enumerate(ranges)
-        dims = [fill(1, i-1)..., :, fill(1, length(models) - i)...]
-        push!(X, reshape(Vector(r), dims...))
-    end
-
-    return X
+    inputs = [Vector(r) for r in ranges]
+    return make_broadcastable_grid(inputs)
 end
 
-function apply_as_list(f, x...)
-    return f([x...])
+function make_broadcastable_grid(inputs)
+    reshaped = [reshape(input, [fill(1, i-1)..., :, fill(1, length(inputs) - i)...]...) for (i, input) in enumerate(inputs)]
+    return reshaped
 end
 
 """
 Run the GP and get the predicted output across a discretized space defined by `m[i]` points between the model ranges.
-
-**TODO**: generalize to more than 2 dimensions (NOTE: [x,y] and the "for" ordering of `y` then `x`. This is to make sure the matrix is in the same orientation for plotting with the smallest values at the bottom-left origin.)
 """
-function gp_output(gp, models::Vector{OperationalParameters}, m=fill(200, length(models)); f=f_gp)
+function gp_output(gp, models::Vector{OperationalParameters}; num_steps=200, m=fill(num_steps, length(models)), f=f_gp)
     X = make_broadcastable_grid(models, m)
 
-    g = (x...)->apply_as_list((x...)->f(gp, x...), x...)
+    # we'd like to broadcast f over X, but f expects its input as a list.  so create g to take care
+    # of that
+    g = (x...)->f(gp, [x...])
     return g.(X...)
-    # return [f(gp, [x,y]) for y in range(models[2].range[1], models[2].range[end], length=m[2]), x in range(models[1].range[1], models[1].range[end], length=m[1])]
 end
 
 
 """
 Precompute the operational likelihood over entire design space in grid defined by `m`
 """
-function p_output(models::Vector{OperationalParameters}, m=fill(200, length(models)))
+function p_output(models::Vector{OperationalParameters}; num_steps=200, m=fill(num_steps, length(models)))
     X = make_broadcastable_grid(models, m)
 
-    g = (x...)->apply_as_list((x...)->pdf(models, x...), x...)
+    g = (x...)->pdf(models, [x...])
     return g.(X...)
 end
 
@@ -177,13 +178,24 @@ end
 
 
 """
-Get the next recommended sample point based on the acquisition function.
+Get the next recommended sample point based on the acquisition function.  The match_original
+argument finds the argmax in a transposed version of the acquisition function output space.  This is
+provided to match the original implementation.
 """
-function get_next_point(y, F̂, P, models; acq)
+function get_next_point(y, F̂, P, models; acq, match_original=false)
     model_ranges = get_model_ranges(models, size(y))
     acq_output = map(acq, F̂, P)
-    next_point = [model_ranges[i][x] for (i, x) in enumerate(argmax(acq_output).I)]
-    push!(next_point, acq_output[argmax(acq_output)])
+    if match_original
+        # flip it
+        acq_output = acq_output'
+    end
+    max_ind = argmax(acq_output).I
+    if match_original
+        # and reverse it
+        max_ind = reverse(max_ind)
+    end
+    next_point = [model_ranges[i][x] for (i, x) in enumerate(max_ind)]
+    push!(next_point, acq_output[CartesianIndex(max_ind...)])
     return next_point
 end
 
@@ -191,12 +203,17 @@ end
 """
 Stochastically sample next point using normalized weights.
 """
-function sample_next_point(y, F̂, P, models; n=1, r=1, acq, return_weight=false)
+function sample_next_point(y, F̂, P, models; n=1, r=1, acq, return_weight=false, match_original=false)
     acq_output = map(acq, F̂, P)
+    if match_original
+        acq_output = acq_output'
+    end
     acq_output = normalize01(acq_output) # to eliminate negative weights
-    # X = [[x,y] for y in range(models[2].range[1], models[2].range[end], length=size(y,2)), x in range(models[1].range[1], models[1].range[end], length=size(y,1))]
     ranges = make_broadcastable_grid(models, size(y))
     X = broadcast((x...)->[x...], ranges...)
+    if match_original
+        X = permutedims(X)
+    end
     Z = normalize(acq_output .^ r, 1)
     if all(isnan.(Z))
         Z = ones(size(Z))
