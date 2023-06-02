@@ -9,11 +9,11 @@ end
 @enum DummySystemSquaresConfig SingleSquare MultipleSquares SingleSquare3d
 @enum DummySystemSquaresModels NormalSquareModels UniformSquareModels UniformSquareModels3d
 
-DUMMY_SYSTEM_CONFIG = SingleSquare
-DUMMY_SYSTEM_MODELS = UniformSquareModels
+DUMMY_SYSTEM_CONFIG = MultipleSquares
+DUMMY_SYSTEM_MODELS = NormalSquareModels
 
 if DUMMY_SYSTEM_CONFIG == SingleSquare
-    system_params = DummyParameters(failure_point=[[1,6]], failure_radius=[1])
+    system_params = DummyParameters(failure_point=[[3,3]], failure_radius=[1])
 elseif DUMMY_SYSTEM_CONFIG == SingleSquare3d
     system_params = DummyParameters(failure_point=[[1,1,1]], failure_radius=[1])
 else
@@ -64,7 +64,7 @@ function System.evaluate(sparams::DummyParameters, inputs::Vector; verbose=false
             r = r_vec[i]
             local_failure = true
             for d in 1:length(C)
-                local_failure &= C[d] - r ≤ input[d] ≤ C[d] + r
+                local_failure &= C[d] - r <= input[d] <= C[d] + r
             end
             failure = failure || local_failure
         end
