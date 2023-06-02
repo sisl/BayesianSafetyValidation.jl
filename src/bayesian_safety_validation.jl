@@ -27,6 +27,7 @@ function bayesian_safety_validation(sparams, models;
                             refit_every_point=false,
                             input_discritization_steps=200,
                             p_estimate_discritization_steps=500,
+                            match_original=false,
                             kwargs...)
     try
         Random.seed!(seed)
@@ -115,12 +116,12 @@ function bayesian_safety_validation(sparams, models;
                 end
 
                 if sample_from_acquisition
-                    next_points = sample_next_point(y, F̂, P, models; acq, n=samples_per_batch)
+                    next_points = sample_next_point(y, F̂, P, models; acq, n=samples_per_batch, match_original)
                     for next_point in next_points
                         X = append_sample(X, next_point; t)
                     end
                 else
-                    next_point = get_next_point(y, F̂, P, models; acq)
+                    next_point = get_next_point(y, F̂, P, models; acq, match_original)
                     X = append_sample(X, next_point; t)
                 end
 

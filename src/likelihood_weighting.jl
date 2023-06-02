@@ -4,12 +4,12 @@ p(fail) estimate across uniform space of the Gaussian process.
 function p_estimate(gp, models; num_steps=500, m=fill(num_steps, length(models)), grid=true)
     if grid
         X = make_broadcastable_grid(models, m)
-        w = broadcast((x...)->reduce(*, [pdf(model.distribution, xx) for (xx, model) in zip(x, models)]), X...)
+        w = broadcast((x...)->prod([pdf(model.distribution, xx) for (xx, model) in zip(x, models)]), X...)
     else
         U = [Uniform(model.range[1], model.range[end]) for model in models]
         X = [rand(u, n) for (u, n) in zip(U, m)]
         X = make_broadcastable_grid(X)
-        w = broadcast((x...)->reduce(*, [pdf(model.distribution, xx) / pdf(u, xx) for (xx, model, u) in zip(x, models, U)]), X...)
+        w = broadcast((x...)->prod([pdf(model.distribution, xx) / pdf(u, xx) for (xx, model, u) in zip(x, models, U)]), X...)
     end
     w = reshape(w, :)
     Y = broadcast((x...)->g_gp(gp, [x...]), X...)
