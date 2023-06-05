@@ -25,19 +25,20 @@ function bayesian_safety_validation(sparams, models;
                             samples_per_batch=1,
                             single_failure_mode=false,
                             refit_every_point=false,
-                            input_discritization_steps=200,
-                            p_estimate_discritization_steps=500,
+                            input_discretization_steps=200,
+                            p_estimate_discretization_steps=500,
                             match_original=false,
                             kwargs...)
     try
         Random.seed!(seed)
+        num_dimensions = length(models)
 
         if isnothing(gp)
             initialize_system && System.initialize()
             reset_system && System.reset(sparams)
 
             inputs = []
-            X = Matrix{Float64}(undef, length(models), 0)
+            X = Matrix{Float64}(undef, num_dimensions, 0)
             Y = Float64[]
 
             #= Surrogate modeling =#
@@ -49,7 +50,7 @@ function bayesian_safety_validation(sparams, models;
             t_offset = length(Y) ÷ length(acquisitions_to_run)
         end
 
-        y = gp_output(gp, models, num_steps=input_discritization_steps)
+        y = gp_output(gp, models, num_steps=input_discretization_steps)
         if show_plots && !show_acquisition_plots && !(show_combined_plot || show_tight_combined_plot)
             display(plot_soft_boundary(gp, models))
         end
@@ -61,7 +62,7 @@ function bayesian_safety_validation(sparams, models;
         sample_from_acquisition = false
 
         function append_sample(X, next_point; t)
-            sample = next_point[1:size(X)[1]]
+            sample = next_point[1:num_dimensions]
             X = hcat(X, sample)
             input = System.generate_input(sparams, sample; models, subdir=t, kwargs...)
             push!(inputs, input)
@@ -75,10 +76,10 @@ function bayesian_safety_validation(sparams, models;
 
             if !refit_every_point
                 # Precompute GP prediction to pass to each acquisition function (faster)
-                F̂ = gp_output(gp, models; num_steps=input_discritization_steps, f=predict_f_vec)
+                F̂ = gp_output(gp, models; num_steps=input_discretization_steps, f=predict_f_vec)
 
                 # Precompute operational likelihood over domain (faster)
-                P = p_output(models; num_steps=input_discritization_steps)
+                P = p_output(models; num_steps=input_discretization_steps)
             end
 
             println("\n", "-"^40)
@@ -86,8 +87,8 @@ function bayesian_safety_validation(sparams, models;
                 if refit_every_point
                     inputs = []
                     # Recompute
-                    F̂ = gp_output(gp, models; num_steps=input_discritization_steps, f=predict_f_vec)
-                    P = p_output(models; num_steps=input_discritization_steps)
+                    F̂ = gp_output(gp, models; num_steps=input_discretization_steps, f=predict_f_vec)
+                    P = p_output(models; num_steps=input_discretization_steps)
                 end
                 @info "Refinement iteration $t (acquisition $a)"
                 if a == 1
@@ -207,7 +208,7 @@ function bayesian_safety_validation(sparams, models;
             alert("GP iteration finished.")
         end
 
-        @info "p(fail) estimate = $(p_estimate(gp, models; num_steps=p_estimate_discritization_steps))"
+        @info "p(fail) estimate = $(p_estimate(gp, models; num_steps=p_estimate_discretization_steps))"
 
         return gp
     catch err

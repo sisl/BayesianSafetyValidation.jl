@@ -52,7 +52,7 @@ g_gp = (gp,x)->f_gp(gp,x) >= 0.5
 
 
 """
-Given a vector of operational parameters and an equal length vector of grid discritization values,
+Given a vector of operational parameters and an equal length vector of grid discretization values,
 return a vector of inputs, with dimensions appropriate for broadcasting over the dense N-dimensional
 input space.  This is useful for applying a function over the full input space, without having to
 construct the full N-dimensional input array.
