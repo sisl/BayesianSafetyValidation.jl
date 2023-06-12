@@ -72,7 +72,7 @@ end
 """
 Run all baseline functions evaluated across `f`.
 """
-function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_plots=true)
+function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_plots=true, input_discretization_steps=500)
     baselines = Dict{Any, Any}(
         "discrete"=>baseline_discrete,
         "uniform"=>baseline_uniform,
@@ -90,7 +90,7 @@ function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_p
         System.evaluate(sparams, inputs)
     end
     if show_truth
-        truth = truth_estimate(sparams, models)
+        truth = truth_estimate(sparams, models, num_steps=input_discretization_steps)
         @info "truth est.: $truth"
     else
         truth = 0
@@ -102,16 +102,16 @@ function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_p
         # baseline_gp = @suppress run_baseline(f, baseline, models, N)
         baselines[k] = baseline_gp # overwrite function with Gaussian procces object.
     end
-    errors, estimates, num_failures, failure_rates, ℓ_most_likely_failures, coverage_metrics, region_metrics = test_baselines(baselines, models, sparams, truth)
+    errors, estimates, num_failures, failure_rates, ℓ_most_likely_failures, coverage_metrics, region_metrics = test_baselines(baselines, models, sparams, truth; input_discretization_steps)
 
     if !isnothing(gp)
-        est = is ? is_estimate_q(gp, models) : p_estimate(gp, models)
+        est = is ? is_estimate_q(gp, models) : p_estimate(gp, models, num_steps=input_discretization_steps)
         gp_error = est - truth
         gp_num_failures = sum(gp.y .>= 0) # logits
         gp_failure_rate = gp_num_failures / length(gp.y)
         gp_ℓ_most_likely_failure = most_likely_failure_likelihood(gp, models)
-        gp_coverage_metric = coverage(gp, models)
-        gp_region_metric = region_characterization(gp, models, sparams)
+        gp_coverage_metric = coverage(gp, models; num_steps=input_discretization_steps)
+        gp_region_metric = region_characterization(gp, models, sparams; num_steps=input_discretization_steps)
         @info "GP: $gp_error"
         errors["GP"] = gp_error
         estimates["GP"] = est
@@ -133,7 +133,7 @@ end
 """
 Get p(fail) estimate for each baseline.
 """
-function test_baselines(baselines::Dict, models, sparams, truth=0; is=false)
+function test_baselines(baselines::Dict, models, sparams, truth=0; is=false, input_discretization_steps=500)
     errors = Dict()
     estimates = Dict()
     num_of_failures = Dict()
@@ -142,13 +142,13 @@ function test_baselines(baselines::Dict, models, sparams, truth=0; is=false)
     coverage_metrics = Dict()
     region_metrics = Dict()
     for (k,v) in baselines
-        est = is ? is_estimate_q(v, models) : p_estimate(v, models)
+        est = is ? is_estimate_q(v, models) : p_estimate(v, models; num_steps=input_discretization_steps)
         err = est - truth
         num_failures = sum(v.y .>= 0) # logits
         failure_rate = num_failures / length(v.y)
         ℓ_most_likely_failure = most_likely_failure_likelihood(v, models)
-        coverage_metric = coverage(v, models)
-        region_metric = region_characterization(v, models, sparams)
+        coverage_metric = coverage(v, models; num_steps=input_discretization_steps)
+        region_metric = region_characterization(v, models, sparams; num_steps=input_discretization_steps)
 
         @info "$k: $err"
         errors[k] = err
@@ -166,18 +166,23 @@ end
 """
 Use discrete grid to sweep function `f` to get 'truth' estimate of p(fail).
 """
-function truth_estimate(sparams, models; m=[500,500], return_mean=false)
+function truth_estimate(sparams, models; num_steps=500, m=fill(num_steps, length(models)), return_mean=false)
     p(x) = prod(pdf(models[i].distribution, x[i]) for i in eachindex(models))
-    a₁, b₁ = models[1].range[1], models[1].range[end]
-    a₂, b₂ = models[2].range[1], models[2].range[end]
-    θ₁ = range(a₁, b₁, length=m[1]) # discrete grid
-    θ₂ = range(a₂, b₂, length=m[2]) # discrete grid
-    Y = @suppress System.evaluate(sparams, [[x,y] for x in θ₁ for y in θ₂])
+    X = make_broadcastable_grid(models, m)
+    # we could make a single call to System.evaluate, but that would
+    # require materializing the full input grid.  so instead we use
+    # broadcasting (along with some extra array wrapping and
+    # unwrapping to match the System.evaluate interface)
+    f(x...) = System.evaluate(sparams, [[x...]])[1]
+    Y = @suppress f.(X...)
     Y = Y .>= 0.5 # Important for probabilistic-valued functions.
+    Y = reshape(Y, :)
     if return_mean
         return mean(Y)
     else
-        w = [p([x,y]) for x in θ₁ for y in θ₂]
+        g(x...) = p([x...])
+        w = g.(X...)
+        w = reshape(w, :)
         return w'Y / sum(w)
     end
 end

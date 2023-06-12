@@ -1,18 +1,15 @@
-function coverage(gp, models; m=[20,20], dist=(z1,z2)->norm(z1 - z2, 2))
+function coverage(gp, models; num_steps=20, m=fill(num_steps, length(models)), dist=(z1,z2)->norm(z1 - z2, 2))
     n = prod(m)
-    a₁, b₁ = models[1].range[1], models[1].range[end]
-    a₂, b₂ = models[2].range[1], models[2].range[end]
-    θ₁ = range(a₁, b₁, length=m[1])
-    θ₂ = range(a₂, b₂, length=m[2])
-    δ₁ = θ₁[2] - θ₁[1]
-    δ₂ = θ₂[2] - θ₂[1]
-    δ = (δ₁ + δ₂)/2
-    grid = [[x1,x2] for x1 in θ₁, x2 in θ₂]
+    ranges = [range(model.range[1], model.range[end], length=l) for (model, l) in zip(models, m)]
+    inputs = [Vector(r) for r in ranges]
+    δ = sum(range[2] - range[1] for range in ranges) / length(ranges)
+    grid = make_broadcastable_grid(inputs)
+    # TODO this will materialize the full input grid.  can probably avoid with some clever broadcasting
+    grid = broadcast((x...)->[x...], grid...)
     d = (j,X) -> minimum([dist([x...], grid[j]) for x in X])
     X = collect(eachcol(gp.x))
     return 1 - (1/δ) * sum(min(d(j,X), δ) / n for j in 1:n)
 end
-
 
 
 """
@@ -42,22 +39,18 @@ falsification(gp) = falsification(gp.x, gp.y)
 falsification(x, y) = x[:, y .>= 0]
 
 
-function region_characterization(gp, models, sparams; m=[200,200], failures_only=false)
-    a₁, b₁ = models[1].range[1], models[1].range[end]
-    a₂, b₂ = models[2].range[1], models[2].range[end]
-    θ₁ = range(a₁, b₁, length=m[1])
-    θ₂ = range(a₂, b₂, length=m[2])
-
-    X = [[x1,x2] for x1 in θ₁, x2 in θ₂]
-    X = reshape(X, (:,))
-    Y_true = System.evaluate(sparams, X; verbose=false) .>= 0.5 # Important for probabilistic-valued systems.
+function region_characterization(gp, models, sparams; num_steps=200, m=fill(num_steps, length(models)), failures_only=false)
+    X = make_broadcastable_grid(models, m)
+    f(x...) = System.evaluate(sparams, [[x...]])[1]
+    Y_true = f.(X...) .>= 0.5 # Important for probabilistic-valued functions.
+    Y_pred = gp_output(gp, models; m, f=g_gp)
     if failures_only
         condition = (ŷ, y) -> y == 1 && ŷ == 1 # compare only failures
     else
         condition = (ŷ, y) -> y == ŷ # compare all classifications
     end
 
-    return mean(condition(g_gp(gp, x), Y_true[i]) for (i,x) in enumerate(X))
+    return mean(condition.(Y_true, Y_pred))
 end
 
 
