@@ -52,7 +52,7 @@ function bayesian_safety_validation(sparams, models;
 
         y = gp_output(gp, models, num_steps=input_discretization_steps)
         if show_plots && !show_acquisition_plots && !(show_combined_plot || show_tight_combined_plot)
-            display(plot_soft_boundary(gp, models))
+            display(plot_soft_boundary(gp, models; num_steps=input_discretization_steps))
         end
 
         if (save_plots || save_plots_svg) && !isdir(plots_dir)
@@ -128,7 +128,7 @@ function bayesian_safety_validation(sparams, models;
 
 
                 if show_acquisition_plots || show_combined_plot || show_tight_combined_plot
-                    plt_gp = plot_soft_boundary(gp, models)
+                    plt_gp = plot_soft_boundary(gp, models; num_steps=input_discretization_steps)
                     next_point_ms = (show_combined_plot || show_tight_combined_plot) ? 3 : 5
                     plt_acq = plot_acquisition(y, F̂, P, models; acq, zero_white=sample_from_acquisition, given_next_point=sample_from_acquisition ? next_points[1] : next_point, ms=next_point_ms, tight=show_tight_combined_plot)
                     if (show_combined_plot || show_tight_combined_plot)
@@ -166,9 +166,9 @@ function bayesian_safety_validation(sparams, models;
                 acq_plts[3] = plot(acq_plts[3], title="failure region sampling", titlefontsize=acq_titlefontsize)
 
                 if show_tight_combined_plot
-                    plt = plot_combined(gp, models, sparams; surrogate=true, show_data=true, title="surrogate", titlefontsize=show_tight_combined_plot ? acq_titlefontsize : 18, tight=show_tight_combined_plot, acq_plts, hide_model=hide_model_after_first && t > 1, add_phantom_point=true, latex_labels)
+                    plt = plot_combined(gp, models, sparams; num_steps=input_discretization_steps, surrogate=true, show_data=true, title="surrogate", titlefontsize=show_tight_combined_plot ? acq_titlefontsize : 18, tight=show_tight_combined_plot, acq_plts, hide_model=hide_model_after_first && t > 1, add_phantom_point=true, latex_labels)
                 else
-                    plt_surrogate_models = plot_combined(gp, models, sparams; surrogate=true, show_data=true, title="surrogate", tight=show_tight_combined_plot, latex_labels)
+                    plt_surrogate_models = plot_combined(gp, models, sparams; num_steps=input_discretization_steps, surrogate=true, show_data=true, title="surrogate", tight=show_tight_combined_plot, latex_labels)
                     plt_acquisitions = plot(acq_plts..., layout=(1,3))
                     plt = plot(plt_surrogate_models, plt_acquisitions, layout=@layout([a{0.8h}; b]), size=(750, 650))
                 end
@@ -196,12 +196,12 @@ function bayesian_safety_validation(sparams, models;
 
             if show_plots && !show_acquisition_plots
                 # already show this above
-                plot_soft_boundary(gp, models) |> display
+                plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
             end
         end
 
         if show_plots
-            plot_soft_boundary(gp, models) |> display
+            plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
         end
 
         if show_alert
