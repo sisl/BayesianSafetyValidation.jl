@@ -16,12 +16,12 @@ end
 Plot actual data points ran through the system.
 Green indicates non-failure, red indicates failure.
 """
-function plot_data!(X, Y; ms=4, inds=[1, 2])
+function plot_data!(X, Y; ms=4, plot_inds=[1, 2])
     for i in eachindex(Y)
         k = X[:, i]
         v = Y[i]
         color = v >= 0 ? :red : :green
-        scatter!([k[inds[1]]], [k[inds[2]]], c=color, ms=ms, marker=:square, label=false)
+        scatter!([k[plot_inds[1]]], [k[plot_inds[2]]], c=color, ms=ms, marker=:square, label=false)
     end
     return plot!()
 end
@@ -32,7 +32,8 @@ Plot prediction of the GP as a soft decision boundary between [0,1].
 """
 function plot_soft_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), show_data=true, overlay=false, overlay_levels=50, ms=4, lw=0, tight=false) # lw=0.2
     y = gp_output(gp, models; m)[inds...]
-    full_models = [model for (model, d) in zip(models, inds) if d == :]
+    s1, s2 = findall(isequal(:), inds)
+    full_models = [models[s1], models[s2]]
     model_ranges = get_model_ranges(full_models, size(y))
     contourf(model_ranges[1], model_ranges[2], y'; c=COLOR_FAIL, lc=:black, lw=lw, clims=(0,1))
     if overlay
@@ -40,8 +41,7 @@ function plot_soft_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2).
         @suppress contour!(model_ranges[1], model_ranges[2], p, c=cgrad([:gray, :black, :black, :white], 10, categorical=true, scale=:exp, rev=false), levels=overlay_levels)
     end
     if show_data
-        inds = [i for (i, d) in enumerate(inds) if d == :]
-        plot_data!(gp.x, gp.y; ms, inds)
+        plot_data!(gp.x, gp.y; ms, plot_inds=[s1, s2])
     end
     if tight
         return plot!(cbar=false, ticks=false, xlabel="", ylabel="", title="", size=(400,400))
@@ -56,7 +56,8 @@ Plot prediction of the GP as a hard decision boundary of either [0,1] given thre
 """
 function plot_hard_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), show_data=true, overlay=false, overlay_levels=50, ms=4, tight=false, lw=1)
     y = gp_output(gp, models; m)[inds...]
-    full_models = [model for (model, d) in zip(models, inds) if d == :]
+    s1, s2 = findall(isequal(:), inds)
+    full_models = [models[s1], models[s2]]
     model_ranges = get_model_ranges(full_models, size(y))
     contourf(model_ranges[1], model_ranges[2], y' .>= 0.5, c=COLOR_FAIL, lc=:white, lw=lw)
     if overlay
@@ -64,8 +65,7 @@ function plot_hard_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2).
         @suppress contour!(model_ranges[1], model_ranges[2], p, c=cgrad([:gray, :black, :black, :white], 10, categorical=true, scale=:exp, rev=false), levels=overlay_levels)
     end
     if show_data
-        inds = [i for (i, d) in enumerate(inds) if d == :]
-        plot_data!(gp.x, gp.y; ms, inds)
+        plot_data!(gp.x, gp.y; ms, plot_inds=[s1, s2])
     end
     if tight
         return plot!(cbar=false, ticks=false, xlabel="", ylabel="", title="", size=(400,400))
@@ -108,8 +108,8 @@ Plot true function, include data (when passing in `gp`).
 """
 function plot_truth(gp, sparams, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), ms=4)
     plot_truth(sparams, models; inds, m)
-    inds = [i for (i, d) in enumerate(inds) if d == :]
-    plot_data!(gp.x, gp.y; inds, ms)
+    plot_inds = [i for (i, d) in enumerate(inds) if d == :]
+    plot_data!(gp.x, gp.y; plot_inds, ms)
 end
 
 
