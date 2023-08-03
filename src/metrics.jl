@@ -1,4 +1,4 @@
-function coverage(gp, models; num_steps=20, m=fill(num_steps, length(models)), dist=(z1,z2)->norm(z1 - z2, 2))
+function coverage_vec(gp, models; num_steps=20, m=fill(num_steps, length(models)), dist=(z1,z2)->norm(z1 - z2, 2))
     n = prod(m)
     ranges = [range(model.range[1], model.range[end], length=l) for (model, l) in zip(models, m)]
     inputs = [Vector(r) for r in ranges]
@@ -8,9 +8,18 @@ function coverage(gp, models; num_steps=20, m=fill(num_steps, length(models)), d
     grid = broadcast((x...)->[x...], grid...)
     d = (j,X) -> minimum([dist([x...], grid[j]) for x in X])
     X = collect(eachcol(gp.x))
-    return 1 - (1/δ) * sum(min(d(j,X), δ) / n for j in 1:n)
+    return [1 - min(d(j, X), δ) / δ for j in 1:n]
 end
 
+function coverage(gp, models; num_steps=20, m=fill(num_steps, length(models)), dist=(z1,z2)->norm(z1 - z2, 2))
+    coverages = coverage_vec(gp, models; num_steps, m, dist)
+    return sum(coverages) / size(coverages)[1]
+end
+
+function quantile_coverage(gp, models, p; num_steps=20, m=fill(num_steps, length(models)), dist=(z1,z2)->norm(z1 - z2, 2))
+    coverages = coverage_vec(gp, models; num_steps, m, dist)
+    return quantile(coverages, p)
+end
 
 """
 Return most-likely failure.
