@@ -88,6 +88,7 @@ export
     most_likely_failures,
     most_likely_failure_likelihood,
     coverage,
+    quantile_coverage,
     region_characterization,
     compute_metrics,
 
