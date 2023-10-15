@@ -50,6 +50,7 @@ export
     predict_f_vec,
     f_gp,
     σ²_gp,
+    σ_gp,
     g_gp,
     gp_output,
     p_output,
@@ -104,6 +105,7 @@ export
     plot_surrogate_truth_combined,
     plot_q_proposal,
     plot_most_likely_failure,
+    plot1d,
     savefig_dense,
 
     ## experiments.jl

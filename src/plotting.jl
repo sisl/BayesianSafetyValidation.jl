@@ -490,3 +490,78 @@ function plot_distribution_of_failures(gp, models)
         ylabel="count",
     )
 end
+
+
+function plot1d(gp, models;
+                m=200,
+                show_obs=true,
+                show_surrogate=true,
+                show_surrogate_uncertainty=false)
+    Xr = get_model_ranges(models, m)[1]
+    plot(Xr, x->pdf(models[1], x); ls=:dot, lw=2, c=:red, label="operational model")
+
+    X = gp.x'
+    Y = inverse.(gp.y)
+
+    # Observations
+    if show_obs && !isempty(X)
+        scatter!(X, Y, c=:red, ms=2, mark=:square, alpha=0.5, label="observations")
+    end
+
+    # Surrogate
+    if show_surrogate
+        ŷ = map(x->f_gp(gp, [x]), Xr)
+        if show_surrogate_uncertainty
+            ribbon = map(x->σ_gp(gp, [x]), Xr)
+        else
+            ribbon = nothing
+        end
+        plot!(Xr, ŷ, ribbon=ribbon, c=:steelblue, lw=2, label="surrogate")
+    end
+
+    # if show_surrogate_pred
+    #     ŷ_fail = map(x->ĝ(gp,x), Xr)
+    #     plot!(Xr, ŷ_fail, c=:blue, lw=1, label="surrogate predicted failure")
+    # end
+
+    # # Acquisition function
+    # acqs = [acq_optimal, acq_boundary, acq_uncertainty]
+    # lml = [most_likely, true, true]
+    # acqs_show = [show_acq_op, show_acq_boundary, show_acq_exploration]
+    # acqs_show_next = [show_acq_next_op, show_acq_next_boundary, show_acq_next_exploration]
+    # if !alternate_acquisitions
+    #     acqs = [acqs[acq_i_standalone]]
+    #     lml = [lml[acq_i_standalone]]
+    #     acqs_show = [acqs_show[acq_i_standalone]]
+    #     acqs_show_next = [acqs_show_next[acq_i_standalone]]
+    # end
+    # for (iₐ, (local_most_likely, acq, local_show_acq, local_show_next_acq)) in enumerate(zip(lml, acqs, acqs_show, acqs_show_next))
+    #     acq2 = (gp,x)->acq(gp, x; t=t, λ)
+    #     y_acq = map(x->acq2(gp,x), Xr)
+    #     acq_label = iₐ == 1 ? "acquisition" : false
+    #     if local_show_acq # show_acq
+    #         plot!(Xr, y_acq,
+    #             fillrange=[yl[1]*ones(length(y_acq)) y_acq],
+    #             c=:MediumSeaGreen, fillalpha=0.2, label=acq_label)
+    #     end
+    #     if local_show_next_acq
+    #         if local_most_likely
+    #             x_acq = argmax_next(gp, Xr, acq2)
+    #             ymax_acq = maximum(y_acq)
+    #         else
+    #             x_acq, q_acq = sample_next(gp, Xr, acq2; seed=t) # Note seed=t
+    #             ymax_acq = maximum(y_acq)
+    #         end
+    #         acq_label_point = iₐ == 1 ? "acquisition point" : false
+    #         scatter!([x_acq], [ymax_acq],
+    #                 c=:green, marker=:dtriangle, label=acq_label_point)
+    #         vline!([x_acq], c=:green, ls=:dash, label=false)
+    #     end
+    # end
+
+    xl = (1.005first(Xr), 1.005last(Xr))
+	yl = (-0.05, 1.05)
+    yticks = [0, 1] # 0:0.25:1
+
+    plot!(xlims=xl, ylims=yl, legend=:outerbottom, size=(600, 240), yticks=yticks)
+end

@@ -46,6 +46,12 @@ Predicted GP variance (`predict_f` outputs a [[mean], [cov]] so we want just the
 
 
 """
+Predicted GP standard deviation.
+"""
+σ_gp = (gp,x)->sqrt(σ²_gp(gp,x))
+
+
+"""
 Predicted GP failure (hard boundary).
 """
 g_gp = (gp,x)->f_gp(gp,x) >= 0.5
@@ -95,13 +101,13 @@ end
 """
 Upper confidence bound. Note, strictly greater than.
 """
-ucb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) + λ*σ²_gp(gp,x)
+ucb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) + λ*σ_gp(gp,x)
 
 
 """
 Lower confidence bound. Note, strictly greater than.
 """
-lcb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) - λ*σ²_gp(gp,x)
+lcb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) - λ*σ_gp(gp,x)
 
 
 """
@@ -185,17 +191,24 @@ provided to match the original implementation.
 function get_next_point(y, F̂, P, models; acq, match_original=false)
     model_ranges = get_model_ranges(models, size(y))
     acq_output = map(acq, F̂, P)
-    if match_original
-        # flip it
-        acq_output = acq_output'
+    if length(models) > 1
+        if match_original
+            # flip it
+            acq_output = acq_output'
+        end
+        max_ind = argmax(acq_output).I
+        if match_original
+            # and reverse it
+            max_ind = reverse(max_ind)
+        end
+        next_point = [model_ranges[i][x] for (i, x) in enumerate(max_ind)]
+        acq_idx = CartesianIndex(max_ind...)
+    else
+        max_ind = argmax(acq_output)
+        next_point = [model_ranges[1][max_ind]]
+        acq_idx = max_ind
     end
-    max_ind = argmax(acq_output).I
-    if match_original
-        # and reverse it
-        max_ind = reverse(max_ind)
-    end
-    next_point = [model_ranges[i][x] for (i, x) in enumerate(max_ind)]
-    push!(next_point, acq_output[CartesianIndex(max_ind...)])
+    push!(next_point, acq_output[acq_idx])
     return next_point
 end
 
