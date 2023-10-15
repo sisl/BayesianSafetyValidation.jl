@@ -61,7 +61,7 @@ system_params = LightDarkPolicy()
 ds0 = initialstate_distribution(system_params.pomdp)
 model = [OperationalParameters("initial y-state", [-20, 20], Normal(ds0.mean, ds0.std))]
 
-surrogate  = bayesian_safety_validation(system_params, model; T=30)
+surrogate  = bayesian_safety_validation(system_params, model; T=30, show_plots=true)
 X_failures = falsification(surrogate.x, surrogate.y)
 ml_failure = most_likely_failure(surrogate.x, surrogate.y, model)
 p_failure  = p_estimate(surrogate, model)

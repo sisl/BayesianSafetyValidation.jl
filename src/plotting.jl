@@ -493,11 +493,11 @@ end
 
 
 function plot1d(gp, models;
-                m=200,
+                num_steps=200,
                 show_obs=true,
                 show_surrogate=true,
                 show_surrogate_uncertainty=false)
-    Xr = get_model_ranges(models, m)[1]
+    Xr = get_model_ranges(models, num_steps)[1]
     plot(Xr, x->pdf(models[1], x); ls=:dot, lw=2, c=:red, label="operational model")
 
     X = gp.x'

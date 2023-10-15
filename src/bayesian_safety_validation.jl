@@ -52,7 +52,12 @@ function bayesian_safety_validation(sparams, models;
 
         y = gp_output(gp, models, num_steps=input_discretization_steps)
         if show_plots && !show_acquisition_plots && !(show_combined_plot || show_tight_combined_plot)
-            display(plot_soft_boundary(gp, models; num_steps=input_discretization_steps))
+            # initial plot without observations
+            if num_dimensions == 1
+                display(plot1d(gp, models; num_steps=input_discretization_steps))
+            else
+                display(plot_soft_boundary(gp, models; num_steps=input_discretization_steps))
+            end
         end
 
         if (save_plots || save_plots_svg) && !isdir(plots_dir)
@@ -196,12 +201,20 @@ function bayesian_safety_validation(sparams, models;
 
             if show_plots && !show_acquisition_plots
                 # already show this above
-                plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
+                if num_dimensions == 1
+                    plot1d(gp, models; num_steps=input_discretization_steps) |> display
+                else
+                    plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
+                end
             end
         end
 
         if show_plots
-            plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
+            if num_dimensions == 1
+                plot1d(gp, models)
+            else
+                plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
+            end
         end
 
         if show_alert
