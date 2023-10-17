@@ -3,20 +3,29 @@ Main algorithm: iterative sample points and re-fit the Gaussian process surrogat
 """
 function bayesian_safety_validation(sparams, models;
                             gp=nothing,
+                            gp_args=(ν=1/2, ll=-0.1, lσ=-0.1, opt=false),
                             T=1,
                             λ=0.1, # UCB
+                            αᵤ=Inf, # decay rate for uncertainty exploration (Inf disables operational model influence)
+                            αᵦ=1, # decay rate for boundary refinement
                             seed=0,
                             initialize_system=false,
                             reset_system=true,
+                            hard_is_estimate=true,
+                            self_normalizing=false,
+                            sample_temperature=1,
                             show_acquisition_plots=false,
                             show_plots=false,
                             show_combined_plot=false,
                             show_tight_combined_plot=false,
+                            show_p_estimates=false,
+                            print_p_estimates=false,
                             hide_model_after_first=false,
                             only_plot_last=false,
                             latex_labels=true,
                             show_alert=false,
                             acquisitions_to_run=[1,2,3], # 1 = uncertainty exploration, 2 = boundary refinement, 3 = failure region sampling
+                            sample_from_acquisitions=[false,false,true], # uncertainty, boundary, failure region.
                             probability_valued_system=true,
                             skip_if_no_failures=false,
                             save_plots=false,
@@ -25,13 +34,20 @@ function bayesian_safety_validation(sparams, models;
                             samples_per_batch=1,
                             single_failure_mode=false,
                             refit_every_point=false,
-                            input_discretization_steps=200,
-                            p_estimate_discretization_steps=500,
+                            m=200, # alias for `input_discretization_steps`
+                            input_discretization_steps=m,
+                            d=500, # alias for `p_estimate_discretization_steps`
+                            p_estimate_discretization_steps=d,
                             match_original=false,
                             kwargs...)
     try
         Random.seed!(seed)
         num_dimensions = length(models)
+        W = Float64[] # self-normalizing weights
+
+        if show_p_estimates
+            p_estimates = []
+        end
 
         if isnothing(gp)
             initialize_system && System.initialize()
@@ -42,7 +58,7 @@ function bayesian_safety_validation(sparams, models;
             Y = Float64[]
 
             #= Surrogate modeling =#
-            gp = gp_fit(X, Y)
+            gp = gp_fit(X, Y; gp_args...)
             t_offset = 0
         else
             X = gp.x
@@ -101,33 +117,50 @@ function bayesian_safety_validation(sparams, models;
                         @warn "Skipping exploration (single failure mode found)."
                         continue # skip exploration when a failure is already found (NOTE: only in `single_failure_mode`)
                     end
-                    acq = uncertainty_acquisition
-                    sample_from_acquisition = false
+                    acq = (μ_σ²,p)->uncertainty_acquisition(μ_σ², p; t, α=αᵤ)
+                    sample_from_acquisition = sample_from_acquisitions[1]
                 elseif a == 2
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure boundary."
                         continue
                     end
-                    acq = (μ_σ²,p)->boundary_acquisition(μ_σ²,p; λ, t)
-                    sample_from_acquisition = false
+                    acq = (μ_σ²,p)->boundary_acquisition(μ_σ², p; λ, t, α=αᵦ)
+                    sample_from_acquisition = sample_from_acquisitions[2]
                 elseif a == 3
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure distribution."
                         continue
                     end
-                    acq = (μ_σ²,p)->failure_region_sampling_acquisition(μ_σ²,p; λ, probability_valued_system)
-                    sample_from_acquisition = true
+                    acq = (μ_σ²,p)->failure_region_sampling_acquisition(μ_σ², p; λ, probability_valued_system)
+                    sample_from_acquisition = sample_from_acquisitions[3]
                 else
                     error("No acquisition function defined for a=$a")
                 end
 
                 if sample_from_acquisition
-                    next_points = sample_next_point(y, F̂, P, models; acq, n=samples_per_batch, match_original)
-                    for next_point in next_points
+                    next_points_and_weight = sample_next_point(y, F̂, P, models; acq, n=samples_per_batch, τ=sample_temperature, match_original, return_weight=self_normalizing)
+                    if self_normalizing
+                        next_points, weight = next_points_and_weight
+                    else
+                        next_points = next_points_and_weight
+                    end
+                    for (i,next_point) in enumerate(next_points)
                         X = append_sample(X, next_point; t)
+                        if self_normalizing
+                            push!(W, weight[i])
+                        end
                     end
                 else
-                    next_point = get_next_point(y, F̂, P, models; acq, match_original)
+                    next_point_and_weight = get_next_point(y, F̂, P, models; acq, match_original, return_weight=self_normalizing)
+                    if self_normalizing
+                        if !all(sample_from_acquisitions)
+                            error("Please make sure all acquisition functions are sampled from to use Self-normalzing importance sampling (see `sample_from_acquisitions`)")
+                        end
+                        next_point, weight = next_point_and_weight
+                        push!(W, weight)
+                    else
+                        next_point = next_point_and_weight
+                    end
                     X = append_sample(X, next_point; t)
                 end
 
@@ -159,7 +192,7 @@ function bayesian_safety_validation(sparams, models;
                 if refit_every_point
                     Y′ = System.evaluate(sparams, inputs; subdir=t, kwargs...)
                     Y = vcat(Y, Y′)
-                    gp = gp_fit(X, Y)
+                    gp = gp_fit(X, Y; gp_args...)
                 end
             end
 
@@ -196,7 +229,7 @@ function bayesian_safety_validation(sparams, models;
             if !refit_every_point
                 Y′ = System.evaluate(sparams, inputs; subdir=t, kwargs...)
                 Y = vcat(Y, Y′)
-                gp = gp_fit(X, Y)
+                gp = gp_fit(X, Y; gp_args...)
             end
 
             if show_plots && !show_acquisition_plots
@@ -207,13 +240,42 @@ function bayesian_safety_validation(sparams, models;
                     plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
                 end
             end
+
+            if show_p_estimates || print_p_estimates
+                if self_normalizing
+                    p_fail = is_self_normalizing(gp, W)
+                else
+                    p_fail = p_estimate(gp, models; num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
+                end
+                if print_p_estimates
+                    @info "P(fail) = $p_fail"
+                end
+                if show_p_estimates
+                    push!(p_estimates, p_fail)
+                    plot_p_estimates(3:3:3t, p_estimates) |> display
+                end
+            end
         end
 
         if show_plots
             if num_dimensions == 1
-                plot1d(gp, models)
+                plot1d(gp, models; num_steps=input_discretization_steps) |> display
             else
                 plot_soft_boundary(gp, models; num_steps=input_discretization_steps) |> display
+            end
+        end
+
+        if show_p_estimates || print_p_estimates
+            if print_p_estimates
+                if self_normalizing
+                    p_fail = is_self_normalizing(gp, W)
+                else
+                    p_fail = p_estimate(gp, models; num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
+                end
+                @info "P(fail) = $p_fail"
+            end
+            if show_p_estimates
+                plot_p_estimates(3:3:3T, p_estimates) |> display
             end
         end
 
@@ -221,9 +283,18 @@ function bayesian_safety_validation(sparams, models;
             alert("GP iteration finished.")
         end
 
-        @info "p(fail) estimate = $(p_estimate(gp, models; num_steps=p_estimate_discretization_steps))"
+        if self_normalizing
+            p_fail = is_self_normalizing(gp, W)
+        else
+            p_fail = p_estimate(gp, models; num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
+        end
+        @info "p(fail) estimate = $p_fail"
 
-        return gp
+        if self_normalizing
+            return gp, W
+        else
+            return gp
+        end
     catch err
         alert("Error in `bayesian_safety_validation`!")
         rethrow(err)

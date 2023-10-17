@@ -180,15 +180,19 @@ function plot_experiment_estimates(results, sparams, models; is_combined=false, 
 end
 
 
-function recompute_p_estimates(gp, models; step=3)
+function recompute_p_estimates(gp, models; step=3, num_steps=500, gp_args=missing, hard=true)
     iterations = []
     p_estimates = []
     for i in 3:step:length(gp.y)
         @info "Iteration $i"
         X = gp.x[:, 1:i]
         Y = inverse.(gp.y[1:i])
-        gp′ = gp_fit(X, Y)
-        p_fail = p_estimate(gp′, models)
+        if ismissing(gp_args)
+            gp′ = gp_fit(X, Y)
+        else
+            gp′ = gp_fit(X, Y; gp_args...)
+        end
+        p_fail = p_estimate(gp′, models; num_steps, hard)
         @info "p(fail) = $p_fail"
         push!(iterations, i)
         push!(p_estimates, p_fail)
@@ -198,16 +202,29 @@ function recompute_p_estimates(gp, models; step=3)
 end
 
 
-function plot_p_estimates(iterations, p_estimates)
+function plot_p_estimates(iterations, p_estimates; nominal=[missing, missing], scale=1.5)
+    nominal_mean, nominal_stderr = nominal
+    show_nominal = !ismissing(nominal_mean)
+
     plot(iterations, p_estimates,
         c=:darkgreen,
-        label=false,
+        label=show_nominal ? "BSV estimate" : false,
         lw=3,
-        margin=5Plots.mm,
-        size=(700,300),
+        # margin=5Plots.mm,
+        # size=(700,300), # was (700,300) for RWD plot
+        size=(600,300) ./ scale,
         xlabel="number of samples",
-        ylabel="\$\\hat{P}_{fail}\$",
+        ylabel="P(fail)",
+        # ylabel="\$\\hat{P}_{fail}\$",
     )
+
+    if show_nominal
+        # Dummy without ribbon for legend
+        plot!([-100, -100], [nominal_mean, nominal_mean], c=:black, ls=:dot, label="nominal estimate", legend=:topright)
+        # Actual nominal line with ribbon
+        plot!([0, iterations[end]], [nominal_mean, nominal_mean], ribbon=[nominal_stderr, nominal_stderr], c=:black, ls=:dot, fillalpha=0.2, label=false)
+    end
+    xlims!(0, iterations[end])
 end
 
 BASELINE_COLS = distinguishable_colors(12, [RGB(1,1,1), RGB(0,0,0)], dropseed=true)

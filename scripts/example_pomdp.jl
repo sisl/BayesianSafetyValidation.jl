@@ -57,17 +57,70 @@ function System.evaluate(sparams::LightDarkPolicy, inputs::Vector; kwargs...)
     return Y
 end
 
+
+function nominal_estimate(sparams::LightDarkPolicy, models::Vector{OperationalParameters}; n=1000)
+    inputs = map(sample->System.generate_input(sparams, sample), rand(models, n))
+    Y = Vector{Bool}(undef, length(inputs))
+    for i in eachindex(Y)
+        Y[i] = System.evaluate(sparams, [inputs[i]])[1]
+        @info "$i/$(length(Y)) running estimate = $(mean_and_std(Y[1:i]))"
+    end
+    return mean_and_std(Y)
+end
+
+#=
+julia> @time nominal_estimate(system_params, models)
+126.3 seconds
+0.155 ± 0.363
+=#
+nominal = [0.155, 0.363/sqrt(200)]
+
 system_params = LightDarkPolicy()
 ds0 = initialstate_distribution(system_params.pomdp)
-model = [OperationalParameters("initial y-state", [-20, 20], Normal(ds0.mean, ds0.std))]
+models = [OperationalParameters("initial y-state", [-20, 20], Normal(ds0.mean, ds0.std))]
 
-surrogate  = bayesian_safety_validation(system_params, model; T=30, show_plots=true)
-X_failures = falsification(surrogate.x, surrogate.y)
-ml_failure = most_likely_failure(surrogate.x, surrogate.y, model)
-p_failure  = p_estimate(surrogate, model)
+# gp_args = (ν=1/2, ll=log(0.1), lσ=log(10))
+# gp_args = (ν=1/2, ll=log(0.05), lσ=log(0.05))
+# gp_args = (ν=1/2, ll=log(0.01), lσ=log(0.1))
+# gp_args = (ν=1/2, ll=log(0.05), lσ=log(0.1))
+# gp_args = (ν=1/2, ll=log(0.05), lσ=log(1))
 
-gp = surrogate
+# gp_args = (ν=1/2, ll=log(1/2), lσ=log(4))
+# gp_args = (ν=1/2, ll=log(1/2), lσ=log(1))
+# gp_args = (ν=5/2, ll=log(1), lσ=log(1))
 
-BSON.@save "gp_lightdark.bson" gp
+# gp_args = (ν=1/2, ll=log(1), lσ=log(1))
+pfail_args = (m=10_000, d=10_000, hard=false)
 
-plot1d(surrogate, model)
+# if false
+    surrogate, weights = bayesian_safety_validation(
+                            system_params, models;
+                            T=40,
+                            m=pfail_args.m, # important
+                            d=pfail_args.d, # important
+                            λ=10, # important (was 10, 2)
+                            αᵤ=Inf, # important (was 1e-8...) disabled with Inf (Inf was good <---!)
+                            # TODO: Try αᵤ larger numbers +100
+                            αᵦ=1, # important (was 0.1...)
+                            # gp_args,
+                            hard_is_estimate=pfail_args.hard, # important
+                            # sample_from_acquisitions=[false,false,true],
+                            # sample_from_acquisitions=[false,false,true],
+                            sample_from_acquisitions=[true,true,true],
+                            self_normalizing=true,
+                            sample_temperature=0.25, # focus towards maximum
+                            show_plots=true,
+                            show_p_estimates=false,
+                            print_p_estimates=true)
+    X_failures = falsification(surrogate.x, surrogate.y)
+    ml_failure = most_likely_failure(surrogate.x, surrogate.y, models)
+    p_failure  = p_estimate(surrogate, models; num_steps=pfail_args.m, hard=pfail_args.hard)
+
+    gp = surrogate
+    BSON.@save "gp_lightdark.bson" gp
+
+    compute_metrics(gp, models, system_params; weights)
+
+    # iterations, p_estimates = recompute_p_estimates(gp, models; gp_args, step=1)
+    # plot_p_estimates(iterations, p_estimates)
+# end

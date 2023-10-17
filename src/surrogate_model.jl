@@ -15,7 +15,7 @@ function gp_fit(X, Y; ν=1/2, ll=-0.1, lσ=-0.1, opt=false)
     mean_f = MeanZero()
     Z = apply.(Y)
     gp = GP(X, Z, mean_f, kernel)
-    opt && @suppress optimize!(gp, NelderMead())
+    opt && @suppress optimize!(gp, method=NelderMead())
     return gp
 end
 
@@ -30,31 +30,32 @@ end
 """
 Predicted GP mean and covariance, given as a vector (reshaped to a matrix)
 """
-predict_f_vec = (gp,x)->map(y->inverse.(y), predict_f(gp, reshape(x', (:,1))))
+predict_f_vec(gp, x::Array) = map(y->inverse.(y), predict_f(gp, reshape(x', (:,1))))
+predict_f_vec(gp, x::Number) = predict_f_vec(gp,[x])
 
 
 """
 Predicted GP mean (`predict_f` outputs a [[mean], [cov]] so we want just the mean as [1][1])
 """
-f_gp = (gp,x)->predict_f_vec(gp,x)[1][1]
+f_gp(gp, x) = predict_f_vec(gp,x)[1][1]
 
 
 """
 Predicted GP variance (`predict_f` outputs a [[mean], [cov]] so we want just the variance as [2][1])
 """
-σ²_gp = (gp,x)->predict_f_vec(gp,x)[2][1]
+σ²_gp(gp, x) = predict_f_vec(gp,x)[2][1]
 
 
 """
 Predicted GP standard deviation.
 """
-σ_gp = (gp,x)->sqrt(σ²_gp(gp,x))
+σ_gp(gp, x) = sqrt(σ²_gp(gp,x))
 
 
 """
 Predicted GP failure (hard boundary).
 """
-g_gp = (gp,x)->f_gp(gp,x) >= 0.5
+g_gp(gp, x) = f_gp(gp,x) >= 0.5
 
 
 """
@@ -93,8 +94,8 @@ Precompute the operational likelihood over entire design space in grid defined b
 function p_output(models::Vector{OperationalParameters}; num_steps=200, m=fill(num_steps, length(models)))
     X = make_broadcastable_grid(models, m)
 
-    g = (x...)->pdf(models, [x...])
-    return g.(X...)
+    p = (x...)->pdf(models, [x...])
+    return p.(X...)
 end
 
 
@@ -118,11 +119,16 @@ function uncertainty_acquisition(gp, x, models::Vector{OperationalParameters}; k
     return uncertainty_acquisition(μ_σ²; kwargs...)
 end
 
-function uncertainty_acquisition(μ_σ²; var=false)
+function uncertainty_acquisition(μ_σ², p; α=Inf, t=1, var=false)
     σ² = μ_σ²[2][1]
-    return var ? σ² : sqrt(σ²)
+    uncertainty = var ? σ² : sqrt(σ²)
+    # return p
+    if α == 0
+        return uncertainty * p
+    else
+        return uncertainty * p^(1/(α*t))
+    end
 end
-uncertainty_acquisition(μ_σ², p; kwargs...) = uncertainty_acquisition(μ_σ²; kwargs...)
 
 
 """
@@ -133,18 +139,16 @@ function boundary_acquisition(gp, x, models::Vector{OperationalParameters}; kwar
     return boundary_acquisition(μ_σ²; kwargs...)
 end
 
-function boundary_acquisition(μ_σ², p; λ=1, t=1, include_p=true, include_decay=true)
+function boundary_acquisition(μ_σ², p; λ=1, t=1, α=1)
 	μ = μ_σ²[1][1]
 	σ = sqrt(μ_σ²[2][1])
 	μ′ = μ * (1 - μ)
 
-    if include_p
-        if !include_decay
-            t = 1 # overwrite
-        end
-        acquisition = (μ′ + λ*σ) * p^(1/t)
+    # acquisition = p
+    if α == 0
+        acquisition = (μ′ + λ*σ) * p
     else
-        acquisition = μ′ + λ*σ
+        acquisition = (μ′ + λ*σ) * p^(1/(α*t))
     end
 	return acquisition
 end
@@ -162,6 +166,8 @@ function failure_region_sampling_acquisition(μ_σ², p; λ=1, probability_value
 	μ = μ_σ²[1][1]
 	σ² = μ_σ²[2][1]
 	σ = sqrt(σ²)
+
+    # acquisition = p
 
     ĥ = (μ + λ*σ) # UCB
     ĝ = ĥ >= 0.5 # failure indicator
@@ -188,13 +194,14 @@ Get the next recommended sample point based on the acquisition function.  The ma
 argument finds the argmax in a transposed version of the acquisition function output space.  This is
 provided to match the original implementation.
 """
-function get_next_point(y, F̂, P, models; acq, match_original=false)
+function get_next_point(y, F̂, P, models; acq, match_original=false, return_weight=false)
     model_ranges = get_model_ranges(models, size(y))
     acq_output = map(acq, F̂, P)
     if length(models) > 1
         if match_original
             # flip it
             acq_output = acq_output'
+            P = P'
         end
         max_ind = argmax(acq_output).I
         if match_original
@@ -209,17 +216,29 @@ function get_next_point(y, F̂, P, models; acq, match_original=false)
         acq_idx = max_ind
     end
     push!(next_point, acq_output[acq_idx])
-    return next_point
+    if return_weight
+        Z = normalize(acq_output, 1)
+        if all(isnan.(Z))
+            Z = normalize(ones(size(Z)), 1)
+        end
+        p = P[acq_idx]
+        q = Z[acq_idx]
+        w = p/q
+        return next_point, w
+    else
+        return next_point
+    end
 end
 
 
 """
 Stochastically sample next point using normalized weights.
 """
-function sample_next_point(y, F̂, P, models; n=1, r=1, acq, return_weight=false, match_original=false)
+function sample_next_point(y, F̂, P, models; n=1, τ=1, acq, return_weight=false, match_original=false)
     acq_output = map(acq, F̂, P)
     if match_original
         acq_output = acq_output'
+        P = P'
     end
     acq_output = normalize01(acq_output) # to eliminate negative weights
     ranges = make_broadcastable_grid(models, size(y))
@@ -227,16 +246,20 @@ function sample_next_point(y, F̂, P, models; n=1, r=1, acq, return_weight=false
     if match_original
         X = permutedims(X)
     end
-    Z = normalize(acq_output .^ r, 1)
+    Z = normalize(acq_output .^ (1/τ), 1)
     if all(isnan.(Z))
-        Z = ones(size(Z))
+        Z = normalize(ones(size(Z)), 1)
     end
     candidate_samples = [X...]
     weights = [Z...]
     indices = eachindex(candidate_samples)
     sampled_indices = sample(indices, StatsBase.Weights(weights), n, replace=true)
     if return_weight
-        return candidate_samples[sampled_indices], weights[sampled_indices]
+        pdfs = [P...]
+        p = pdfs[sampled_indices]
+        q = weights[sampled_indices]
+        w = p/q
+        return candidate_samples[sampled_indices], w
     else
         return candidate_samples[sampled_indices]
     end

@@ -1,7 +1,7 @@
 """
 p(fail) estimate across uniform space of the Gaussian process.
 """
-function p_estimate(gp, models; num_steps=500, m=fill(num_steps, length(models)), grid=true)
+function p_estimate(gp, models; num_steps=500, m=fill(num_steps, length(models)), grid=true, hard=true)
     if grid
         X = make_broadcastable_grid(models, m)
         w = broadcast((x...)->prod([pdf(model.distribution, xx) for (xx, model) in zip(x, models)]), X...)
@@ -12,7 +12,8 @@ function p_estimate(gp, models; num_steps=500, m=fill(num_steps, length(models))
         w = broadcast((x...)->prod([pdf(model.distribution, xx) / pdf(u, xx) for (xx, model, u) in zip(x, models, U)]), X...)
     end
     w = reshape(w, :)
-    Y = broadcast((x...)->g_gp(gp, [x...]), X...)
+    f_is = hard ? g_gp : f_gp
+    Y = broadcast((x...)->f_is(gp, [x...]), X...)
     Y = reshape(Y, :)
     if grid
         return w'Y / sum(w)

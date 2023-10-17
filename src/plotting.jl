@@ -1,4 +1,4 @@
-default(fontfamily="Computer Modern", framestyle=:box, palette=palette(:darkrainbow))
+Plots.default(fontfamily="Computer Modern", framestyle=:box, palette=palette(:darkrainbow))
 
 COLOR_FAIL = cgrad([:green, :white, :red])
 COLOR_FAIL3 = cgrad([:green, :white, :red], categorical=true)
@@ -494,74 +494,64 @@ end
 
 function plot1d(gp, models;
                 num_steps=200,
+                num_steps_obs=100,
+                scale=1.5,
                 show_obs=true,
                 show_surrogate=true,
-                show_surrogate_uncertainty=false)
+                show_surrogate_uncertainty=false,
+                show_surrogate_pred=true)
+
     Xr = get_model_ranges(models, num_steps)[1]
-    plot(Xr, x->pdf(models[1], x); ls=:dot, lw=2, c=:red, label="operational model")
+    Xrobs = get_model_ranges(models, min(num_steps, num_steps_obs))[1]
+    plot(Xrobs, x->pdf(models[1], x); lw=0.5, ls=:dash, c=:gray, label="operational model") # \$p(x)\$")
 
     X = gp.x'
     Y = inverse.(gp.y)
 
-    # Observations
-    if show_obs && !isempty(X)
-        scatter!(X, Y, c=:red, ms=2, mark=:square, alpha=0.5, label="observations")
-    end
-
     # Surrogate
     if show_surrogate
-        ŷ = map(x->f_gp(gp, [x]), Xr)
+        ŷ = map(x->f_gp(gp, x), Xr)
         if show_surrogate_uncertainty
-            ribbon = map(x->σ_gp(gp, [x]), Xr)
+            ribbon = map(x->σ_gp(gp, x), Xr)
         else
             ribbon = nothing
         end
-        plot!(Xr, ŷ, ribbon=ribbon, c=:steelblue, lw=2, label="surrogate")
+        gp_color = :black # :steelblue
+        plot!(Xr, ŷ, ribbon=ribbon, c=gp_color, lw=0.5, label="surrogate") # \$\\hat{f}(x)\$")
     end
 
-    # if show_surrogate_pred
-    #     ŷ_fail = map(x->ĝ(gp,x), Xr)
-    #     plot!(Xr, ŷ_fail, c=:blue, lw=1, label="surrogate predicted failure")
-    # end
+    if show_surrogate_pred
+        ŷ_fail = map(x->g_gp(gp, x), Xr)
+        # plot!(Xr, ŷ_fail, c=:black, lw=0.5, ls=:dot, label="surrogate hard prediction") # \$\\hat{g}(x)\$")
+        pred_fails = ŷ_fail .== 1
+        pred_succs = ŷ_fail .== 0
+        pred_mark = :vline
+        pred_ms = 1
+        pred_msw = 0
+        pred_fail_color = :red
+        pred_succ_color = :limegreen
+        # for i in [0.0475, 0.05, 0.0525]
+        for i in [0.05]
+            scatter!(Xr[pred_fails], (1+i)*ones(sum(pred_fails)), label=false, c=pred_fail_color, msc=pred_fail_color, msw=pred_msw, ms=pred_ms, mark=pred_mark)
+            scatter!(Xr[pred_succs], (1+i)*ones(sum(pred_succs)), label=false, c=pred_succ_color, msc=pred_succ_color, msw=pred_msw, ms=pred_ms, mark=pred_mark)
+        end
+    end
 
-    # # Acquisition function
-    # acqs = [acq_optimal, acq_boundary, acq_uncertainty]
-    # lml = [most_likely, true, true]
-    # acqs_show = [show_acq_op, show_acq_boundary, show_acq_exploration]
-    # acqs_show_next = [show_acq_next_op, show_acq_next_boundary, show_acq_next_exploration]
-    # if !alternate_acquisitions
-    #     acqs = [acqs[acq_i_standalone]]
-    #     lml = [lml[acq_i_standalone]]
-    #     acqs_show = [acqs_show[acq_i_standalone]]
-    #     acqs_show_next = [acqs_show_next[acq_i_standalone]]
-    # end
-    # for (iₐ, (local_most_likely, acq, local_show_acq, local_show_next_acq)) in enumerate(zip(lml, acqs, acqs_show, acqs_show_next))
-    #     acq2 = (gp,x)->acq(gp, x; t=t, λ)
-    #     y_acq = map(x->acq2(gp,x), Xr)
-    #     acq_label = iₐ == 1 ? "acquisition" : false
-    #     if local_show_acq # show_acq
-    #         plot!(Xr, y_acq,
-    #             fillrange=[yl[1]*ones(length(y_acq)) y_acq],
-    #             c=:MediumSeaGreen, fillalpha=0.2, label=acq_label)
-    #     end
-    #     if local_show_next_acq
-    #         if local_most_likely
-    #             x_acq = argmax_next(gp, Xr, acq2)
-    #             ymax_acq = maximum(y_acq)
-    #         else
-    #             x_acq, q_acq = sample_next(gp, Xr, acq2; seed=t) # Note seed=t
-    #             ymax_acq = maximum(y_acq)
-    #         end
-    #         acq_label_point = iₐ == 1 ? "acquisition point" : false
-    #         scatter!([x_acq], [ymax_acq],
-    #                 c=:green, marker=:dtriangle, label=acq_label_point)
-    #         vline!([x_acq], c=:green, ls=:dash, label=false)
-    #     end
-    # end
+
+    # Observations
+    if show_obs && !isempty(X)
+        obs_fail = Y .== 1
+        obs_succ = Y .== 0
+        scatter!(X[obs_fail], Y[obs_fail], c=:red, ms=1.5, msw=0.5, mark=:square, alpha=0.5, label=false) #, label="observed failures") # \$\\mathbf{Y}\$")
+        scatter!(X[obs_succ], Y[obs_succ], c=:green, ms=1.5, msw=0.5, mark=:square, alpha=0.5, label=false) #, label="observed successes") # \$\\mathbf{Y}\$")
+    end
 
     xl = (1.005first(Xr), 1.005last(Xr))
-	yl = (-0.05, 1.05)
+	yl = (-0.05, 1.1)
     yticks = [0, 1] # 0:0.25:1
 
-    plot!(xlims=xl, ylims=yl, legend=:outerbottom, size=(600, 240), yticks=yticks)
+    xlabel!("initial state")
+    ylabel!("probability")
+
+    plot!(xlims=xl, ylims=yl, legend=:left, size=(600, 300) ./ scale, yticks=yticks)
 end

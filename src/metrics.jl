@@ -63,8 +63,12 @@ function region_characterization(gp, models, sparams; num_steps=200, m=fill(num_
 end
 
 
-function compute_metrics(gp, models, sparams; compute_truth=true, relative_error=true)
-    est = p_estimate(gp, models)
+function compute_metrics(gp, models, sparams; weights=missing, compute_truth=false, relative_error=true)
+    if ismissing(weights)
+        est = p_estimate(gp, models)
+    else
+        est = is_self_normalizing(gp, weights)
+    end
 
     if compute_truth
         truth = truth_estimate(sparams, models)

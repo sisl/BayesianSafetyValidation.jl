@@ -75,3 +75,11 @@ function is_estimate_theoretically_optimal(gp, models; n=10_000, λ=0.0)
 
     return mean(P ./ Q .* Y) # Y already all ones (i.e., all failures)
 end
+
+
+"""
+Self-normalzing importance sampling.
+"""
+function is_self_normalizing(gp, W)
+    return sum(inverse(gp.y[i]) * W[i] for i in eachindex(gp.y)) / sum(W)
+end
