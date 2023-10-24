@@ -7,14 +7,6 @@ system_params = DummyBoothSystem()
 θ2 = OperationalParameters("x_2", [-10, 5], Normal(-2.5, 1))
 models = [θ1, θ2]
 
-function System.reset(sparams::DummyBoothSystem) end
-
-function System.initialize(; kwargs...) end
-
-function System.generate_input(sparams::DummyBoothSystem, sample::Vector; kwargs...)
-    return sample
-end
-
 booth(x1,x2) = (x1 + 2x2 - 7)^2 + (2x1 + x2 - 5)^2
 booth(x) = booth(x[1], x[2])
 f_booth(sparams::DummyBoothSystem, x) =  booth(x) ≤ sparams.γ

@@ -7,14 +7,6 @@ system_params = DummyHimmelblauSystem()
 θ2 = OperationalParameters("x_2", [-6, 6], MixtureModel([TruncatedNormal(2.0, 1.0, -6, 6), TruncatedNormal(-2.0, 1.0, -6, 6)], [0.5, 0.5]))
 models = [θ1, θ2]
 
-function System.reset(sparams::DummyHimmelblauSystem) end
-
-function System.initialize(; kwargs...) end
-
-function System.generate_input(sparams::DummyHimmelblauSystem, sample::Vector; kwargs...)
-    return sample
-end
-
 himmelblau(x1,x2) = (x1^2+x2-11)^2 + (x1+x2^2-7)^2
 himmelblau(x) = himmelblau(x[1], x[2])
 f_himmelblau(sparams::DummyHimmelblauSystem, x; fx=himmelblau(x)) = fx ≤ sparams.γ

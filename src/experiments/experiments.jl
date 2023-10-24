@@ -180,52 +180,125 @@ function plot_experiment_estimates(results, sparams, models; is_combined=false, 
 end
 
 
-function recompute_p_estimates(gp, models; step=3, num_steps=500, gp_args=missing, hard=true)
-    iterations = []
+function recompute_p_estimates(gp, models; weights=missing, step=3, num_steps=500, gp_args=missing, hard=true, verbose=false)
+    num_samples = []
     p_estimates = []
+    p_estimate_confs = []
     for i in 3:step:length(gp.y)
-        @info "Iteration $i"
+        verbose && @info "Sample $i/$(length(gp.y))"
         X = gp.x[:, 1:i]
+        Z = gp.y[1:i]
         Y = inverse.(gp.y[1:i])
-        if ismissing(gp_args)
-            gp′ = gp_fit(X, Y)
+        if ismissing(weights)
+            if ismissing(gp_args)
+                gp′ = gp_fit(X, Y)
+            else
+                gp′ = gp_fit(X, Y; gp_args...)
+            end
         else
-            gp′ = gp_fit(X, Y; gp_args...)
+            # SNIS does not need re-fit GP
+            gp′ = (x=X, y=Z)
         end
-        p_fail = p_estimate(gp′, models; num_steps, hard)
-        @info "p(fail) = $p_fail"
-        push!(iterations, i)
+        p_fail, p_fail_conf = p_estimate(gp′, models; num_steps, hard, weights=weights[1:i])
+        verbose && @info "p(fail) = $p_fail"
+        push!(num_samples, i)
         push!(p_estimates, p_fail)
+        push!(p_estimate_confs, p_fail_conf)
     end
 
-    return iterations, p_estimates
+    return num_samples, p_estimates, p_estimate_confs
 end
 
 
-function plot_p_estimates(iterations, p_estimates; nominal=[missing, missing], scale=1.5)
-    nominal_mean, nominal_stderr = nominal
-    show_nominal = !ismissing(nominal_mean)
+function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missing, nominal=missing, scale=1.5, full_nominal=false, logscale=true)
+    show_nominal = !ismissing(nominal)
 
-    plot(iterations, p_estimates,
-        c=:darkgreen,
+    if show_nominal
+        nominal_color = :black
+        nominal_end = mean(nominal)[end]
+
+        # Actual nominal line hline
+        plot([1, length(nominal)], [nominal_end, nominal_end]; label=false, c=nominal_color, lw=2, ls=:dash, alpha=0.5)
+
+        if !full_nominal
+            nominal = nominal[1:min(length(nominal), num_samples[end])]
+        end
+        plot_nominal(nominal)
+        plotf = plot!
+    else
+        plotf = plot
+    end
+
+    bsv_color = :darkgreen
+    bsv_ls = (c=bsv_color, lw=1)
+
+    # Dummy without ribbon for legend
+    # plt = plotf([-100, -100], [0, 0]; bsv_ls..., label=show_nominal ? "BSV estimate" : false)
+    # plot!(num_samples, p_estimates;
+    plt = plotf(num_samples, p_estimates;
+        bsv_ls...,
         label=show_nominal ? "BSV estimate" : false,
-        lw=3,
         # margin=5Plots.mm,
         # size=(700,300), # was (700,300) for RWD plot
-        size=(600,300) ./ scale,
+        size=(600,350) ./ scale,
         xlabel="number of samples",
-        ylabel="P(fail)",
-        # ylabel="\$\\hat{P}_{fail}\$",
+        ylabel="p(fail) estimate",
+        ribbon=p_estimates_conf,
+        fillalpha=0.2,
+        margin=scale ≥ 1.5 ? 1Plots.mm : 15Plots.mm,
     )
 
     if show_nominal
-        # Dummy without ribbon for legend
-        plot!([-100, -100], [nominal_mean, nominal_mean], c=:black, ls=:dot, label="nominal estimate", legend=:topright)
-        # Actual nominal line with ribbon
-        plot!([0, iterations[end]], [nominal_mean, nominal_mean], ribbon=[nominal_stderr, nominal_stderr], c=:black, ls=:dot, fillalpha=0.2, label=false)
+        xlims!(1, length(nominal))
+    else
+        xlims!(1, num_samples[end])
     end
-    xlims!(0, iterations[end])
+
+    xl = xlims()
+
+    if !ismissing(gpy)
+        cs0 = (y, cs=Float64.(cumsum(y)), ϵ=1e-1) -> begin
+            cs[cs .== 0] .= ϵ
+            return cs
+        end
+
+        twinls = :dot
+        plttwindata = (eachindex(gpy), cs0(inverse.(gpy)))
+        if logscale
+            plttwinargs = (xlims=xl, yaxis=:log, label=false)
+        else
+            plttwinargs = (xlims=xl, label=false)
+        end
+        plttwin = plot(plttwindata...; plttwinargs..., bsv_ls..., alpha=0.5)
+        yl = ylims()
+        if logscale
+            yl = (yl[1], yl[2]*100_000_000_000_000)
+        else
+            yl = (yl[1], yl[2]*2)
+        end
+        ylims!(yl)
+        plt = plot(plt)
+        plot!(twinx(), plttwindata...; plttwinargs..., ylims=yl, ylabel="number of failures", bsv_ls..., ls=twinls)
+        if show_nominal
+            plot!(twinx(), eachindex(nominal), cs0(nominal); xlims=xl, ylims=yl, yaxis=:log, ticks=false, label=false, c=nominal_color, lw=1, ls=twinls, alpha=1.0)
+        end
+    end
+
+    return plt
 end
+
+
+function plot_nominal(nominal; hold=true)
+    nominal_μs = [mean(nominal[1:i]) for i in eachindex(nominal)];
+    nominal_conf = [i == 1 ? 0 : 2.58 * (std(nominal[1:i]) / sqrt(i)) for i in eachindex(nominal)];
+
+    plotf = hold ? plot! : plot
+    # Dummy without ribbon for legend
+    # plotf([-100, -100], [0, 0], c=:black, ls=:dash, label="nominal estimate")
+    # plot!(eachindex(nominal), nominal_μs, ribbon=nominal_conf, c=:black, label=false, ls=:dash, lw=1, fillalpha=0.2)
+    plotf(eachindex(nominal), nominal_μs, ribbon=nominal_conf, c=:black, label="nominal estimate", ls=:solid, lw=1, fillalpha=0.2)
+end
+
 
 BASELINE_COLS = distinguishable_colors(12, [RGB(1,1,1), RGB(0,0,0)], dropseed=true)
 BASELINE_PCOLS = map(col -> RGB(red(col), green(col), blue(col)), BASELINE_COLS)

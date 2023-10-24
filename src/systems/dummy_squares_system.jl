@@ -41,17 +41,6 @@ end
 ## System interface implementation.
 ###########################################################
 
-function System.reset(sparams::DummyParameters) end
-
-
-function System.initialize(; kwargs...) end
-
-
-function System.generate_input(sparams::DummyParameters, sample::Vector; kwargs...)
-    return sample # pass-through
-end
-
-
 function System.evaluate(sparams::DummyParameters, inputs::Vector; verbose=false, kwargs...)
     verbose && @info "Evaluating dummy system ($inputs)..."
     Y = Vector{Bool}(undef, 0)

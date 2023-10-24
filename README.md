@@ -14,11 +14,52 @@ Estimate the probability of failure iteratively using a Gaussian process surroga
 
 <img src="./media/diagram.png">
 
+
 ## Installation
 
 ```julia
 ] add https://github.com/sisl/BayesianSafetyValidation.jl
 ```
+
+
+## Interface
+Users define the following interface for their own black-box system:
+
+```julia
+"""
+Abstract base type for parameters used by the system under test.
+"""
+abstract type SystemParameters end
+
+
+"""
+Interface function to reset the system under test.
+"""
+function reset(sparams::SystemParameters; kwargs...) end
+
+
+"""
+Interface function to initialize the system under test.
+"""
+function initialize(sparams::SystemParameters; kwargs...) end
+
+
+"""
+Interface function to generate input to the system based on the selected parametric sample,
+e.g., take an image and return the parameters used to generate that image.
+"""
+generate_input(sparams::SystemParameters, sample::Vector; kwargs...)::Vector = sample # Default: pass-through
+
+
+"""
+Interface function to call/evaluate the system under test (SUT) given the generated input.
+Returns a boolean `true` if the system failed.
+"""
+function evaluate(sparams::SystemParameters, inputs::Vector; kwargs...)::Vector{Bool} end
+```
+
+See interface at `src/systems/system.jl`.
+
 
 ## Example usage
 
@@ -30,9 +71,6 @@ using BayesianSafetyValidation
     x2c = 5
 end
 
-System.generate_input(sparams::ExampleSystem, sample::Vector; kwargs...) = sample # pass-through
-function System.reset(::ExampleSystem) end
-function System.initialize(; kwargs...) end
 function System.evaluate(sparams::ExampleSystem, inputs::Vector; kwargs...)
     return [x[1] ≥ sparams.x1c && x[2] ≥ sparams.x2c for x in inputs]
 end
@@ -47,6 +85,7 @@ X_failures = falsification(surrogate.x, surrogate.y)
 ml_failure = most_likely_failure(surrogate.x, surrogate.y, model)
 p_failure  = p_estimate(surrogate, model)
 ```
+
 
 ## Visualizations
 

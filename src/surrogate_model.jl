@@ -122,11 +122,11 @@ end
 function uncertainty_acquisition(μ_σ², p; α=Inf, t=1, var=false)
     σ² = μ_σ²[2][1]
     uncertainty = var ? σ² : sqrt(σ²)
-    # return p
+
     if α == 0
         return uncertainty * p
     else
-        return uncertainty * p^(1/(α*t))
+        return uncertainty * p^BigFloat(1/(α*t))
     end
 end
 
@@ -144,11 +144,10 @@ function boundary_acquisition(μ_σ², p; λ=1, t=1, α=1)
 	σ = sqrt(μ_σ²[2][1])
 	μ′ = μ * (1 - μ)
 
-    # acquisition = p
     if α == 0
         acquisition = (μ′ + λ*σ) * p
     else
-        acquisition = (μ′ + λ*σ) * p^(1/(α*t))
+        acquisition = (μ′ + λ*σ) * p^BigFloat(1/(α*t))
     end
 	return acquisition
 end
@@ -162,19 +161,22 @@ function failure_region_sampling_acquisition(gp, x, models::Vector{OperationalPa
     return failure_region_sampling_acquisition(μ_σ²; kwargs...)
 end
 
-function failure_region_sampling_acquisition(μ_σ², p; λ=1, probability_valued_system=true)
+function failure_region_sampling_acquisition(μ_σ², p; λ=1, probability_valued_system=true, loosen_thresh=false)
 	μ = μ_σ²[1][1]
 	σ² = μ_σ²[2][1]
 	σ = sqrt(σ²)
 
-    # acquisition = p
+    ĥ = μ + λ*σ # UCB
 
-    ĥ = (μ + λ*σ) # UCB
-    ĝ = ĥ >= 0.5 # failure indicator
-    if probability_valued_system
-        acquisition = ĝ * ĥ * p
+    if loosen_thresh
+        acquisition = ĥ
     else
-        acquisition = ĝ * p
+        ĝ = ĥ >= 0.5 # failure indicator
+        if probability_valued_system
+            acquisition = ĝ * ĥ * p
+        else
+            acquisition = ĝ * p
+        end
     end
 
 	return acquisition
@@ -194,9 +196,15 @@ Get the next recommended sample point based on the acquisition function.  The ma
 argument finds the argmax in a transposed version of the acquisition function output space.  This is
 provided to match the original implementation.
 """
-function get_next_point(y, F̂, P, models; acq, match_original=false, return_weight=false)
+function get_next_point(y, F̂, P, models; acq, match_original=false, return_weight=false, is_frs=false)
     model_ranges = get_model_ranges(models, size(y))
     acq_output = map(acq, F̂, P)
+
+    if is_frs && all(acq_output .== 0)
+        @warn "Loosening failure region sampling, no predicted failures."
+        acq_output = map(acq, F̂, P, trues(length(P)))
+    end
+
     if length(models) > 1
         if match_original
             # flip it
@@ -219,6 +227,7 @@ function get_next_point(y, F̂, P, models; acq, match_original=false, return_wei
     if return_weight
         Z = normalize(acq_output, 1)
         if all(isnan.(Z))
+            @warn "All weights are NaN"
             Z = normalize(ones(size(Z)), 1)
         end
         p = P[acq_idx]
@@ -234,8 +243,14 @@ end
 """
 Stochastically sample next point using normalized weights.
 """
-function sample_next_point(y, F̂, P, models; n=1, τ=1, acq, return_weight=false, match_original=false)
+function sample_next_point(y, F̂, P, models; n=1, τ=1, acq, return_weight=false, match_original=false, is_frs=false)
     acq_output = map(acq, F̂, P)
+
+    if is_frs && all(acq_output .== 0)
+        @warn "Loosening failure region sampling, no predicted failures."
+        acq_output = map(acq, F̂, P, trues(length(P)))
+    end
+
     if match_original
         acq_output = acq_output'
         P = P'
@@ -246,8 +261,9 @@ function sample_next_point(y, F̂, P, models; n=1, τ=1, acq, return_weight=fals
     if match_original
         X = permutedims(X)
     end
-    Z = normalize(acq_output .^ (1/τ), 1)
+    Z = normalize(acq_output .^ BigFloat(1/τ), 1)
     if all(isnan.(Z))
+        @warn "All weights are NaN"
         Z = normalize(ones(size(Z)), 1)
     end
     candidate_samples = [X...]

@@ -8,17 +8,19 @@ function bayesian_safety_validation(sparams, models;
                             λ=0.1, # UCB
                             αᵤ=Inf, # decay rate for uncertainty exploration (Inf disables operational model influence)
                             αᵦ=1, # decay rate for boundary refinement
+                            sample_temperature=1, # τ sampling parameter
                             seed=0,
                             initialize_system=false,
                             reset_system=true,
                             hard_is_estimate=true,
                             self_normalizing=false,
-                            sample_temperature=1,
+                            frs_loosening=false,
                             show_acquisition_plots=false,
                             show_plots=false,
                             show_combined_plot=false,
                             show_tight_combined_plot=false,
                             show_p_estimates=false,
+                            show_num_failures=false,
                             print_p_estimates=false,
                             hide_model_after_first=false,
                             only_plot_last=false,
@@ -39,6 +41,7 @@ function bayesian_safety_validation(sparams, models;
                             d=500, # alias for `p_estimate_discretization_steps`
                             p_estimate_discretization_steps=d,
                             match_original=false,
+                            nominal=missing,
                             kwargs...)
     try
         Random.seed!(seed)
@@ -47,10 +50,11 @@ function bayesian_safety_validation(sparams, models;
 
         if show_p_estimates
             p_estimates = []
+            p_estimates_conf = []
         end
 
         if isnothing(gp)
-            initialize_system && System.initialize()
+            initialize_system && System.initialize(sparams)
             reset_system && System.reset(sparams)
 
             inputs = []
@@ -104,6 +108,7 @@ function bayesian_safety_validation(sparams, models;
             end
 
             println("\n", "-"^40)
+            is_frs = false
             for a in acquisitions_to_run
                 if refit_every_point
                     inputs = []
@@ -111,7 +116,7 @@ function bayesian_safety_validation(sparams, models;
                     F̂ = gp_output(gp, models; num_steps=input_discretization_steps, f=predict_f_vec)
                     P = p_output(models; num_steps=input_discretization_steps)
                 end
-                @info "Refinement iteration $t (acquisition $a)"
+                @info "Refinement iteration $t/$T (acquisition $a)"
                 if a == 1
                     if any(Y .== 1) && single_failure_mode
                         @warn "Skipping exploration (single failure mode found)."
@@ -119,6 +124,7 @@ function bayesian_safety_validation(sparams, models;
                     end
                     acq = (μ_σ²,p)->uncertainty_acquisition(μ_σ², p; t, α=αᵤ)
                     sample_from_acquisition = sample_from_acquisitions[1]
+                    is_frs = false
                 elseif a == 2
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure boundary."
@@ -126,19 +132,21 @@ function bayesian_safety_validation(sparams, models;
                     end
                     acq = (μ_σ²,p)->boundary_acquisition(μ_σ², p; λ, t, α=αᵦ)
                     sample_from_acquisition = sample_from_acquisitions[2]
+                    is_frs = false
                 elseif a == 3
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure distribution."
                         continue
                     end
-                    acq = (μ_σ²,p)->failure_region_sampling_acquisition(μ_σ², p; λ, probability_valued_system)
+                    acq = (μ_σ²,p,loosen_thresh=false)->failure_region_sampling_acquisition(μ_σ², p; λ, probability_valued_system, loosen_thresh)
                     sample_from_acquisition = sample_from_acquisitions[3]
+                    is_frs = frs_loosening
                 else
                     error("No acquisition function defined for a=$a")
                 end
 
                 if sample_from_acquisition
-                    next_points_and_weight = sample_next_point(y, F̂, P, models; acq, n=samples_per_batch, τ=sample_temperature, match_original, return_weight=self_normalizing)
+                    next_points_and_weight = sample_next_point(y, F̂, P, models; acq, n=samples_per_batch, τ=sample_temperature, match_original, return_weight=self_normalizing, is_frs)
                     if self_normalizing
                         next_points, weight = next_points_and_weight
                     else
@@ -151,7 +159,7 @@ function bayesian_safety_validation(sparams, models;
                         end
                     end
                 else
-                    next_point_and_weight = get_next_point(y, F̂, P, models; acq, match_original, return_weight=self_normalizing)
+                    next_point_and_weight = get_next_point(y, F̂, P, models; acq, match_original, return_weight=self_normalizing, is_frs)
                     if self_normalizing
                         if !all(sample_from_acquisitions)
                             error("Please make sure all acquisition functions are sampled from to use Self-normalzing importance sampling (see `sample_from_acquisitions`)")
@@ -242,17 +250,14 @@ function bayesian_safety_validation(sparams, models;
             end
 
             if show_p_estimates || print_p_estimates
-                if self_normalizing
-                    p_fail = is_self_normalizing(gp, W)
-                else
-                    p_fail = p_estimate(gp, models; num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
-                end
+                p_fail, p_fail_conf = p_estimate(gp, models; weights=self_normalizing ? W : missing, num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
                 if print_p_estimates
-                    @info "P(fail) = $p_fail"
+                    @info "p(fail) = $p_fail, $(Int(sum(inverse.(gp.y))))/$(length(gp.y))"
                 end
                 if show_p_estimates
                     push!(p_estimates, p_fail)
-                    plot_p_estimates(3:3:3t, p_estimates) |> display
+                    push!(p_estimates_conf, p_fail_conf)
+                    plot_p_estimates(3:3:3t, p_estimates, p_estimates_conf; nominal=nominal, gpy=show_num_failures ? gp.y : missing) |> display
                 end
             end
         end
@@ -265,30 +270,18 @@ function bayesian_safety_validation(sparams, models;
             end
         end
 
-        if show_p_estimates || print_p_estimates
-            if print_p_estimates
-                if self_normalizing
-                    p_fail = is_self_normalizing(gp, W)
-                else
-                    p_fail = p_estimate(gp, models; num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
-                end
-                @info "P(fail) = $p_fail"
-            end
-            if show_p_estimates
-                plot_p_estimates(3:3:3T, p_estimates) |> display
-            end
+        if show_p_estimates
+            plot_p_estimates(3:3:3T, p_estimates, p_estimates_conf; nominal=nominal, gpy=show_num_failures ? gp.y : missing) |> display
         end
 
         if show_alert
             alert("GP iteration finished.")
         end
 
-        if self_normalizing
-            p_fail = is_self_normalizing(gp, W)
-        else
-            p_fail = p_estimate(gp, models; num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
+        if !print_p_estimates # already prints this during execution
+            p_fail, p_fail_conf = p_estimate(gp, models; weights=self_normalizing ? W : missing, num_steps=p_estimate_discretization_steps, hard=hard_is_estimate)
+            @info "p(fail) = $p_fail ± $p_fail_conf (99% confidence interval)"
         end
-        @info "p(fail) estimate = $p_fail"
 
         if self_normalizing
             return gp, W

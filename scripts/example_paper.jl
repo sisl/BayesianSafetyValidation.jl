@@ -6,9 +6,6 @@ using BayesianSafetyValidation
     x2c = 5
 end
 
-System.generate_input(sparams::DummyPaperSystem, sample::Vector; kwargs...) = sample # pass-through
-function System.reset(::DummyPaperSystem) end
-function System.initialize(; kwargs...) end
 function System.evaluate(sparams::DummyPaperSystem, inputs::Vector; kwargs...)
     return [x[1] ≥ sparams.x1c && x[2] ≥ sparams.x2c for x in inputs]
 end

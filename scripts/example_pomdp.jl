@@ -1,126 +1,139 @@
-using Revise
-using BayesianSafetyValidation
-using BetaZero
-using LightDark
-using ParticleBeliefs
-using ParticleFilters
-using POMDPs
-using POMDPTools
-using LocalApproximationValueIteration
-using LocalFunctionApproximation
-using GridInterpolations
-using BSON
+using Distributed
+NUM_PROCS = 10 # 3
+nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
 
-function BetaZero.input_representation(b::ParticleHistoryBelief{LightDarkState})
-    Y = [s.y for s in ParticleFilters.particles(b)]
-    μ = mean(Y)
-    σ = std(Y)
-    return Float32[μ, σ]
-end
+@everywhere begin
+    using Revise
+    using BayesianSafetyValidation
+    using BetaZero
+    using LightDark
+    using ParticleBeliefs
+    using ParticleFilters
+    using POMDPs
+    using POMDPTools
+    using LocalApproximationValueIteration
+    using LocalFunctionApproximation
+    using GridInterpolations
+    using SharedArrays
+    using BSON
 
-lightdark_belief_reward(pomdp, b, a, bp) = mean(reward(pomdp, s, a) for s in ParticleFilters.particles(b))
-POMDPs.convert_s(::Type{A}, b::ParticleHistoryBelief{LightDarkState}, m::BeliefMDP) where A<:AbstractArray = eltype(A)[BetaZero.input_representation(b)...]
-POMDPs.convert_s(::Type{ParticleHistoryBelief{LightDarkState}}, b::A, m::BeliefMDP) where A<:AbstractArray = ParticleHistoryBelief(particles=ParticleCollection(rand(LDNormalStateDist(b[1], b[2]), up.pf.n_init)))
-
-!@isdefined(LAVI_POLICY) && global const LAVI_POLICY = BSON.load("policy_lavi_ld10_timing.bson")[:lavi_policy]
-global const MODEL = LightDarkPOMDP()
-global const UP = BootstrapFilter(MODEL, 500)
-
-@with_kw mutable struct LightDarkPolicy <: System.SystemParameters
-    pomdp::POMDP = MODEL
-    updater::Updater = UP
-    policy::Policy = LAVI_POLICY
-    max_steps::Int = 100
-end
-
-System.generate_input(sparams::LightDarkPolicy, sample::Vector; kwargs...) = sample # pass-through
-
-function System.reset(::LightDarkPolicy) end
-function System.initialize(; kwargs...) end
-
-function System.evaluate(sparams::LightDarkPolicy, inputs::Vector; kwargs...)
-    pomdp = sparams.pomdp
-    π = sparams.policy
-    up = sparams.updater
-    max_steps = sparams.max_steps
-
-    # inputs: [[y from uncertainty acq], [y from boundary acq], [y from p(fail) acq]]
-    Y = Vector{Bool}(undef, length(inputs))
-    for (i,ys0) in enumerate(inputs)
-        s0 = LightDarkState(0, ys0[1])
-        ds0 = initialstate_distribution(pomdp)
-        b0 = initialize_belief(up, ds0)
-        history = simulate(HistoryRecorder(max_steps=max_steps), pomdp, π, up, b0, s0)
-        g = discounted_reward(history)
-        Y[i] = g <= 0
+    function BetaZero.input_representation(b::ParticleHistoryBelief{LightDarkState})
+        Y = [s.y for s in ParticleFilters.particles(b)]
+        μ = mean(Y)
+        σ = std(Y)
+        return Float32[μ, σ]
     end
-    return Y
-end
 
+    lightdark_belief_reward(pomdp, b, a, bp) = mean(reward(pomdp, s, a) for s in ParticleFilters.particles(b))
+    POMDPs.convert_s(::Type{A}, b::ParticleHistoryBelief{LightDarkState}, m::BeliefMDP) where A<:AbstractArray = eltype(A)[BetaZero.input_representation(b)...]
+    POMDPs.convert_s(::Type{ParticleHistoryBelief{LightDarkState}}, b::A, m::BeliefMDP) where A<:AbstractArray = ParticleHistoryBelief(particles=ParticleCollection(rand(LDNormalStateDist(b[1], b[2]), up.pf.n_init)))
 
-function nominal_estimate(sparams::LightDarkPolicy, models::Vector{OperationalParameters}; n=1000)
-    inputs = map(sample->System.generate_input(sparams, sample), rand(models, n))
-    Y = Vector{Bool}(undef, length(inputs))
-    for i in eachindex(Y)
-        Y[i] = System.evaluate(sparams, [inputs[i]])[1]
-        @info "$i/$(length(Y)) running estimate = $(mean_and_std(Y[1:i]))"
+    global USE_LD5 = false
+
+    if USE_LD5
+        !@isdefined(LAVI_POLICY_5) && global const LAVI_POLICY_5 = BSON.load(joinpath(@__DIR__, "policy_lavi_ld5_timing.bson"))[:lavi_policy]
+        global MODEL = LightDarkPOMDP(; light_loc=5, sigma = y->abs(y - 5)/sqrt(2) + 1e-2, correct_r=10, incorrect_r=-10)
+    else
+        !@isdefined(LAVI_POLICY_10) && global const LAVI_POLICY_10 = BSON.load(joinpath(@__DIR__, "policy_lavi_ld10_timing.bson"))[:lavi_policy]
+        global MODEL = LightDarkPOMDP()
     end
-    return mean_and_std(Y)
-end
 
-#=
-julia> @time nominal_estimate(system_params, models)
-126.3 seconds
-0.155 ± 0.363
-=#
-nominal = [0.155, 0.363/sqrt(200)]
+    global const UP = BootstrapFilter(MODEL, 500)
+
+    # NOTE:
+    # rare = did not execute stop (got lost)
+    # non-rare = did not execute stop or stopped NOT at the goal 0 ± 1
+    global RARE_FAILURE = false
+
+    Base.@kwdef mutable struct LightDarkPolicy <: System.SystemParameters
+        pomdp::POMDP = MODEL
+        updater::Updater = UP
+        policy::Policy = USE_LD5 ? LAVI_POLICY_5 : LAVI_POLICY_10
+        max_steps::Int = RARE_FAILURE ? 50 : 100
+    end
+
+    function System.evaluate(sparams::LightDarkPolicy, inputs::Vector; kwargs...)
+        pomdp = sparams.pomdp
+        π = sparams.policy
+        up = sparams.updater
+        max_steps = sparams.max_steps
+
+        # inputs: [[y from uncertainty acq], [y from boundary acq], [y from p(fail) acq]]
+        Y = SharedArray{Bool}(length(inputs))
+        @sync @distributed for i in eachindex(inputs)
+            ys0 = inputs[i]
+            s0 = LightDarkState(0, ys0[1])
+            ds0 = initialstate_distribution(pomdp)
+            b0 = initialize_belief(up, ds0)
+            history = simulate(HistoryRecorder(max_steps=max_steps), pomdp, π, up, b0, s0)
+            g = discounted_reward(history)
+            Y[i] = RARE_FAILURE ? g == 0 : g <= 0
+        end
+        return Y
+    end
+
+
+    function nominal_estimate(sparams::LightDarkPolicy, models::Vector{OperationalParameters}; n=RARE_FAILURE ? 100_000 : 5_000)
+        inputs = map(sample->System.generate_input(sparams, sample), rand(models, n))
+        Y = SharedArray{Bool}(length(inputs))
+        @sync @distributed for i in eachindex(Y)
+            Y[i] = System.evaluate(sparams, [inputs[i]])[1]
+            @info "$i/$(length(Y)) running estimate = $(mean_and_std(Y[1:i]))"
+        end
+        @info "Finished computing nominal: $(mean_and_stderr(Y))"
+        return Y
+    end
+end
 
 system_params = LightDarkPolicy()
 ds0 = initialstate_distribution(system_params.pomdp)
 models = [OperationalParameters("initial y-state", [-20, 20], Normal(ds0.mean, ds0.std))]
 
-# gp_args = (ν=1/2, ll=log(0.1), lσ=log(10))
-# gp_args = (ν=1/2, ll=log(0.05), lσ=log(0.05))
-# gp_args = (ν=1/2, ll=log(0.01), lσ=log(0.1))
-# gp_args = (ν=1/2, ll=log(0.05), lσ=log(0.1))
-# gp_args = (ν=1/2, ll=log(0.05), lσ=log(1))
+global nominal_filename = joinpath(@__DIR__, "nominal_lightdark_$(system_params.max_steps)horizon_$(RARE_FAILURE ? "rare" : "nonrare").bson")
+global RUN_NOMINAL = false
 
-# gp_args = (ν=1/2, ll=log(1/2), lσ=log(4))
-# gp_args = (ν=1/2, ll=log(1/2), lσ=log(1))
-# gp_args = (ν=5/2, ll=log(1), lσ=log(1))
+if RUN_NOMINAL
+    @time nominal = nominal_estimate(system_params, models)
+    BSON.@save nominal_filename nominal
+end
 
-# gp_args = (ν=1/2, ll=log(1), lσ=log(1))
-pfail_args = (m=10_000, d=10_000, hard=false)
+!@isdefined(nominal) && BSON.@load nominal_filename nominal
 
-# if false
+if !RUN_NOMINAL
+    global surrogate, weights, X_failures, ml_failure, p_failure, gp, T
+
+    N = RARE_FAILURE ? Int(1.5*10^4) : 3000
+    T = N÷3
+    nominalN = RARE_FAILURE ? 4*10^4 : length(nominal)
     surrogate, weights = bayesian_safety_validation(
                             system_params, models;
-                            T=40,
-                            m=pfail_args.m, # important
-                            d=pfail_args.d, # important
-                            λ=10, # important (was 10, 2)
-                            αᵤ=Inf, # important (was 1e-8...) disabled with Inf (Inf was good <---!)
-                            # TODO: Try αᵤ larger numbers +100
-                            αᵦ=1, # important (was 0.1...)
-                            # gp_args,
-                            hard_is_estimate=pfail_args.hard, # important
-                            # sample_from_acquisitions=[false,false,true],
-                            # sample_from_acquisitions=[false,false,true],
+                            T=T,
+                            λ=RARE_FAILURE ? 0.1 : 1, # 0.5,
+                            αᵤ=RARE_FAILURE ? 10 : 2, # 10
+                            αᵦ=RARE_FAILURE ? 10 : 0,
                             sample_from_acquisitions=[true,true,true],
                             self_normalizing=true,
-                            sample_temperature=0.25, # focus towards maximum
-                            show_plots=true,
-                            show_p_estimates=false,
-                            print_p_estimates=true)
+                            sample_temperature=RARE_FAILURE ? 0.25 : 1, # 0.8 is nice.
+                            frs_loosening=true,
+                            show_plots=false,
+                            show_p_estimates=true,
+                            show_num_failures=true,
+                            print_p_estimates=true,
+                            nominal=nominal[1:nominalN])
+                            # nominal=nominal[1:3T])
     X_failures = falsification(surrogate.x, surrogate.y)
     ml_failure = most_likely_failure(surrogate.x, surrogate.y, models)
-    p_failure  = p_estimate(surrogate, models; num_steps=pfail_args.m, hard=pfail_args.hard)
+    p_failure  = p_estimate(surrogate, models; weights)
 
     gp = surrogate
-    BSON.@save "gp_lightdark.bson" gp
+    BSON.@save "gp_lightdark_$(RARE_FAILURE ? "rare" : "nonrare").bson" gp
 
     compute_metrics(gp, models, system_params; weights)
 
-    # iterations, p_estimates = recompute_p_estimates(gp, models; gp_args, step=1)
-    # plot_p_estimates(iterations, p_estimates)
-# end
+    plot1d(gp, models)
+    #==#
+    num_samples, p_estimates, p_estimate_confs = recompute_p_estimates(gp, models; weights)
+    plot_p_estimates(num_samples, p_estimates, p_estimate_confs; nominal=nominal[1:nominalN], full_nominal=true, gpy=gp.y, scale=1.5, logscale=false)
+    # plot_p_estimates(1:N, fill(0.0,N), fill(NaN, N); nominal=nominal[1:4*10^4], full_nominal=true)
+    #==#
+end
