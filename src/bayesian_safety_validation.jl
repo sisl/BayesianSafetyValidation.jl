@@ -2,8 +2,8 @@
 Main algorithm: iterative sample points and re-fit the Gaussian process surrogate model.
 """
 function bayesian_safety_validation(sparams, models;
-                            gp=nothing,
-                            gp_args=(ν=1/2, ll=-0.1, lσ=-0.1, opt=false),
+                            gp_args=(σ=exp(-0.1),),
+                            gp=initialize_gp(; gp_args...),
                             T=1,
                             λ=0.1, # UCB
                             αᵤ=Inf, # decay rate for uncertainty exploration (Inf disables operational model influence)
@@ -21,6 +21,7 @@ function bayesian_safety_validation(sparams, models;
                             show_tight_combined_plot=false,
                             show_p_estimates=false,
                             show_num_failures=false,
+                            plot_every=1,
                             print_p_estimates=false,
                             hide_model_after_first=false,
                             only_plot_last=false,
@@ -53,7 +54,7 @@ function bayesian_safety_validation(sparams, models;
             p_estimates_conf = []
         end
 
-        if isnothing(gp)
+        if isempty(gp.y)
             initialize_system && System.initialize(sparams)
             reset_system && System.reset(sparams)
 
@@ -62,7 +63,6 @@ function bayesian_safety_validation(sparams, models;
             Y = Float64[]
 
             #= Surrogate modeling =#
-            gp = gp_fit(X, Y; gp_args...)
             t_offset = 0
         else
             X = gp.x
@@ -98,6 +98,7 @@ function bayesian_safety_validation(sparams, models;
         for t in (1+t_offset):(T+t_offset)
             inputs = []
             acq_plts = []
+            plotting_condition = t % plot_every == 0
 
             if !refit_every_point
                 # Precompute GP prediction to pass to each acquisition function (faster)
@@ -173,7 +174,7 @@ function bayesian_safety_validation(sparams, models;
                 end
 
 
-                if show_acquisition_plots || show_combined_plot || show_tight_combined_plot
+                if (show_acquisition_plots || show_combined_plot || show_tight_combined_plot) && plotting_condition
                     plt_gp = plot_soft_boundary(gp, models; num_steps=input_discretization_steps)
                     next_point_ms = (show_combined_plot || show_tight_combined_plot) ? 3 : 5
                     plt_acq = plot_acquisition(y, F̂, P, models; acq, zero_white=sample_from_acquisition, given_next_point=sample_from_acquisition ? next_points[1] : next_point, ms=next_point_ms, tight=show_tight_combined_plot)
@@ -200,12 +201,12 @@ function bayesian_safety_validation(sparams, models;
                 if refit_every_point
                     Y′ = System.evaluate(sparams, inputs; subdir=t, kwargs...)
                     Y = vcat(Y, Y′)
-                    gp = gp_fit(X, Y; gp_args...)
+                    @time gp_fit!(gp, X, Y)
                 end
             end
 
             # TODO: Separate function.
-            if (show_combined_plot || show_tight_combined_plot) && ((only_plot_last && t == T) || !only_plot_last)
+            if ((show_combined_plot || show_tight_combined_plot) && ((only_plot_last && t == T) || !only_plot_last)) && plotting_condition
                 acq_titlefontsize = show_tight_combined_plot ? 12 : 10
                 acq_plts[1] = plot(acq_plts[1], title="uncertainty exploration", titlefontsize=acq_titlefontsize)
                 acq_plts[2] = plot(acq_plts[2], title="boundary refinement", titlefontsize=acq_titlefontsize)
@@ -237,10 +238,10 @@ function bayesian_safety_validation(sparams, models;
             if !refit_every_point
                 Y′ = System.evaluate(sparams, inputs; subdir=t, kwargs...)
                 Y = vcat(Y, Y′)
-                gp = gp_fit(X, Y; gp_args...)
+                @time gp_fit!(gp, X, Y)
             end
 
-            if show_plots && !show_acquisition_plots
+            if show_plots && !show_acquisition_plots && plotting_condition
                 # already show this above
                 if num_dimensions == 1
                     plot1d(gp, models; num_steps=input_discretization_steps) |> display
@@ -254,9 +255,9 @@ function bayesian_safety_validation(sparams, models;
                 if print_p_estimates
                     @info "p(fail) = $p_fail, $(Int(sum(inverse.(gp.y))))/$(length(gp.y))"
                 end
-                if show_p_estimates
-                    push!(p_estimates, p_fail)
-                    push!(p_estimates_conf, p_fail_conf)
+                push!(p_estimates, p_fail)
+                push!(p_estimates_conf, p_fail_conf)
+                if show_p_estimates && plotting_condition
                     plot_p_estimates(3:3:3t, p_estimates, p_estimates_conf; nominal=nominal, gpy=show_num_failures ? gp.y : missing) |> display
                 end
             end
@@ -304,7 +305,7 @@ function run_single_sample(gp, models, sparams, sample; subdir="test")
     X = hcat(gp.x, sample)
     Y′ = System.evaluate(sparams, inputs; subdir=subdir)
     Y = vcat(gp.y, Y′)
-    gp = gp_fit(X, Y)
+    gp_fit!(gp, X, Y)
     display(plot_soft_boundary(gp, models))
     return gp
 end

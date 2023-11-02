@@ -1,3 +1,13 @@
+# TODO: PR for AbstractGPs
+Base.vcat(x1::ColVecs, x2::ColVecs) = ColVecs(hcat(x1.X, x2.X))
+
+@with_kw mutable struct Surrogate
+    f
+    x = []
+    y = []
+    σ = exp(-0.1)
+end
+
 logit(y; s=1/10) = log(y / (1 - y)) / s
 inverse_logit(z; s=1/10) = 1 / (1 + exp(-s*z)) # sigmoid with steepness s
 
@@ -7,15 +17,26 @@ inverse_transform(ŷ; ϵ=1e-5) = (ŷ - ϵ) / (1 - 2ϵ)
 apply(y) = logit(transform(y))
 inverse(y) = clamp(inverse_transform(inverse_logit(y)), 0, 1) # small variations based on ϵ may cause GP values just slightly under 0 and slightly over 1, so clamp.
 
+function initialize_gp(; σ=0.1)
+    kernel = SqExponentialKernel()
+    mean_f = AbstractGPs.ZeroMean()
+    return Surrogate(; f=GP(mean_f, kernel), σ)
+end
+
 """
 Fit Gaussian process surrogate model to results.
 """
-function gp_fit(X, Y; ν=1/2, ll=-0.1, lσ=-0.1, opt=false)
-    kernel = Matern(ν, ll, lσ)
-    mean_f = MeanZero()
+function gp_fit!(gp::Surrogate, X, Y; sequential=true)
     Z = apply.(Y)
-    gp = GP(X, Z, mean_f, kernel)
-    opt && @suppress optimize!(gp, method=NelderMead())
+    idx = length(gp.y)
+    I = idx+1:length(Y)
+    if sequential
+        gp.f = posterior(gp.f(ColVecs(X[:,I]), gp.σ), Z[I]) # only re-fit the newest points
+    else
+        gp.f = posterior(gp.f(ColVecs(X), gp.σ), Z)
+    end
+    gp.x = X
+    gp.y = Z
     return gp
 end
 
@@ -23,27 +44,34 @@ end
 function gp_fit(results::Dict)
     X::Matrix = cmat([[k...] for k in collect(keys(results))])
     Y::Vector{Bool} = collect(values(results))
-    return gp_fit(X, Y)
+    return gp_fit!(X, Y)
 end
 
 
 """
 Predicted GP mean and covariance, given as a vector (reshaped to a matrix)
 """
-predict_f_vec(gp, x::Array) = map(y->inverse.(y), predict_f(gp, reshape(x', (:,1))))
-predict_f_vec(gp, x::Number) = predict_f_vec(gp,[x])
+# predict_f_vec(gp, x::Array) = (f_gp(gp, x), σ²_gp(gp, x))
+function predict_f_vec(gp, x::Array)
+    𝒩 = marginals(gp.f(colvec(x), gp.σ))[1] # get the marginal in one go
+    return inverse(𝒩.μ), inverse(𝒩.σ)^2
+end
+predict_f_vec(gp, x::Number) = predict_f_vec(gp, [x])
 
+vec2mat(x::Vector) = reshape(x, :, 1)
+colvec(x::Vector) = ColVecs(vec2mat(x))
+colvec(x::Number) = [x]
 
 """
 Predicted GP mean (`predict_f` outputs a [[mean], [cov]] so we want just the mean as [1][1])
 """
-f_gp(gp, x) = predict_f_vec(gp,x)[1][1]
+f_gp(gp, x) = inverse(mean(gp.f(colvec(x), gp.σ))[1])
 
 
 """
 Predicted GP variance (`predict_f` outputs a [[mean], [cov]] so we want just the variance as [2][1])
 """
-σ²_gp(gp, x) = predict_f_vec(gp,x)[2][1]
+σ²_gp(gp, x) = inverse(cov(gp.f(colvec(x), gp.σ))[1])
 
 
 """
@@ -120,14 +148,18 @@ function uncertainty_acquisition(gp, x, models::Vector{OperationalParameters}; k
 end
 
 function uncertainty_acquisition(μ_σ², p; α=Inf, t=1, var=false)
-    σ² = μ_σ²[2][1]
+    σ² = μ_σ²[2]
     uncertainty = var ? σ² : sqrt(σ²)
 
     if α == 0
-        return uncertainty * p
+        acquisition = uncertainty * p
     else
-        return uncertainty * p^BigFloat(1/(α*t))
+        acquisition = uncertainty * p^(1/(α*t))
+        if isnan(acquisition)
+            acquisition = uncertainty * p^BigFloat(1/(α*t))
+        end
     end
+    return acquisition
 end
 
 
@@ -140,14 +172,17 @@ function boundary_acquisition(gp, x, models::Vector{OperationalParameters}; kwar
 end
 
 function boundary_acquisition(μ_σ², p; λ=1, t=1, α=1)
-	μ = μ_σ²[1][1]
-	σ = sqrt(μ_σ²[2][1])
+	μ = μ_σ²[1]
+	σ = sqrt(μ_σ²[2])
 	μ′ = μ * (1 - μ)
 
     if α == 0
         acquisition = (μ′ + λ*σ) * p
     else
-        acquisition = (μ′ + λ*σ) * p^BigFloat(1/(α*t))
+        acquisition = (μ′ + λ*σ) * p^(1/(α*t))
+        if isnan(acquisition)
+            acquisition = (μ′ + λ*σ) * p^BigFloat(1/(α*t))
+        end
     end
 	return acquisition
 end
@@ -162,8 +197,8 @@ function failure_region_sampling_acquisition(gp, x, models::Vector{OperationalPa
 end
 
 function failure_region_sampling_acquisition(μ_σ², p; λ=1, probability_valued_system=true, loosen_thresh=false)
-	μ = μ_σ²[1][1]
-	σ² = μ_σ²[2][1]
+	μ = μ_σ²[1]
+	σ² = μ_σ²[2]
 	σ = sqrt(σ²)
 
     ĥ = μ + λ*σ # UCB
@@ -261,10 +296,11 @@ function sample_next_point(y, F̂, P, models; n=1, τ=1, acq, return_weight=fals
     if match_original
         X = permutedims(X)
     end
-    Z = normalize(acq_output .^ BigFloat(1/τ), 1)
+    Z = normalize(acq_output .^ (1/τ), 1)
     if all(isnan.(Z))
         @warn "All weights are NaN"
-        Z = normalize(ones(size(Z)), 1)
+        Z = normalize(acq_output .^ BigFloat(1/τ), 1)
+        # Z = normalize(ones(size(Z)), 1)
     end
     candidate_samples = [X...]
     weights = [Z...]

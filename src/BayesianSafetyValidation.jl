@@ -4,7 +4,8 @@ using Reexport
 using Alert
 using ColorSchemes
 @reexport using Distributions
-using GaussianProcesses
+using AbstractGPs
+import AbstractGPs.KernelFunctions: ColVecs, SqExponentialKernel
 using KernelDensity
 using LatinHypercubeSampling
 using LinearAlgebra
@@ -40,13 +41,15 @@ export
     OperationalParameters,
 
     ## surrogate_model.jl
+    Surrogate,
     logit,
     inverse_logit,
     transform,
     inverse_transform,
     apply,
     inverse,
-    gp_fit,
+    initialize_gp,
+    gp_fit!,
     predict_f_vec,
     f_gp,
     σ²_gp,

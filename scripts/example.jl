@@ -1,5 +1,8 @@
 using Revise
 using BayesianSafetyValidation
+import AbstractGPs.KernelFunctions: ColVecs
+
+Base.vcat(x1::ColVecs, x2::ColVecs) = ColVecs(hcat(x1.X, x2.X))
 
 include("../src/systems/dummy_booth_system.jl")
 # include("../src/systems/dummy_squares_system.jl")

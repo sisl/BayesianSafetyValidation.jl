@@ -246,6 +246,7 @@ function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missin
         ribbon=p_estimates_conf,
         fillalpha=0.2,
         margin=scale ≥ 1.5 ? 1Plots.mm : 15Plots.mm,
+        legend=:topright,
     )
 
     if show_nominal
@@ -274,7 +275,7 @@ function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missin
         if logscale
             yl = (yl[1], yl[2]*100_000_000_000_000)
         else
-            yl = (yl[1], yl[2]*2)
+            yl = (yl[1], yl[2]*3)
         end
         ylims!(yl)
         plt = plot(plt)

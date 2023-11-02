@@ -4,10 +4,10 @@ authors = ["Robert Moss <rmoss92@gmail.com>"]
 version = "0.1.0"
 
 [deps]
+AbstractGPs = "99985d1d-32ba-4be9-9821-2ec096f28918"
 Alert = "28312eec-4d86-447d-83ad-bc2b262de792"
 ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
-GaussianProcesses = "891a1506-143c-57d2-908e-e1f8e92e6de9"
 KernelDensity = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
 LatinHypercubeSampling = "a5e1c1ea-c99a-51d3-a14d-a9a37257b02d"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

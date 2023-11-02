@@ -1,11 +1,18 @@
 using Distributed
-NUM_PROCS = 10 # 3
+NUM_PROCS = 1 # 10 # 3
 nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
+
+module BetaZero
+    using POMDPs
+    using Random
+    export BeliefMDP
+    include("belief_mdp.jl")
+end
 
 @everywhere begin
     using Revise
     using BayesianSafetyValidation
-    using BetaZero
+    using .BetaZero
     using LightDark
     using ParticleBeliefs
     using ParticleFilters
@@ -17,7 +24,8 @@ nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
     using SharedArrays
     using BSON
 
-    function BetaZero.input_representation(b::ParticleHistoryBelief{LightDarkState})
+
+    function input_representation(b::ParticleHistoryBelief{LightDarkState})
         Y = [s.y for s in ParticleFilters.particles(b)]
         μ = mean(Y)
         σ = std(Y)
@@ -25,8 +33,8 @@ nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
     end
 
     lightdark_belief_reward(pomdp, b, a, bp) = mean(reward(pomdp, s, a) for s in ParticleFilters.particles(b))
-    POMDPs.convert_s(::Type{A}, b::ParticleHistoryBelief{LightDarkState}, m::BeliefMDP) where A<:AbstractArray = eltype(A)[BetaZero.input_representation(b)...]
-    POMDPs.convert_s(::Type{ParticleHistoryBelief{LightDarkState}}, b::A, m::BeliefMDP) where A<:AbstractArray = ParticleHistoryBelief(particles=ParticleCollection(rand(LDNormalStateDist(b[1], b[2]), up.pf.n_init)))
+    POMDPs.convert_s(::Type{A}, b::ParticleHistoryBelief{LightDarkState}, m) where A<:AbstractArray = eltype(A)[input_representation(b)...]
+    POMDPs.convert_s(::Type{ParticleHistoryBelief{LightDarkState}}, b::A, m) where A<:AbstractArray = ParticleHistoryBelief(particles=ParticleCollection(rand(LDNormalStateDist(b[1], b[2]), up.pf.n_init)))
 
     global USE_LD5 = false
 
@@ -43,7 +51,7 @@ nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
     # NOTE:
     # rare = did not execute stop (got lost)
     # non-rare = did not execute stop or stopped NOT at the goal 0 ± 1
-    global RARE_FAILURE = false
+    global RARE_FAILURE = true
 
     Base.@kwdef mutable struct LightDarkPolicy <: System.SystemParameters
         pomdp::POMDP = MODEL
@@ -63,7 +71,7 @@ nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
         @sync @distributed for i in eachindex(inputs)
             ys0 = inputs[i]
             s0 = LightDarkState(0, ys0[1])
-            ds0 = initialstate_distribution(pomdp)
+            ds0 = initialstate(pomdp)
             b0 = initialize_belief(up, ds0)
             history = simulate(HistoryRecorder(max_steps=max_steps), pomdp, π, up, b0, s0)
             g = discounted_reward(history)
@@ -86,7 +94,7 @@ nprocs() < NUM_PROCS && addprocs(NUM_PROCS)
 end
 
 system_params = LightDarkPolicy()
-ds0 = initialstate_distribution(system_params.pomdp)
+ds0 = initialstate(system_params.pomdp)
 models = [OperationalParameters("initial y-state", [-20, 20], Normal(ds0.mean, ds0.std))]
 
 global nominal_filename = joinpath(@__DIR__, "nominal_lightdark_$(system_params.max_steps)horizon_$(RARE_FAILURE ? "rare" : "nonrare").bson")
@@ -97,43 +105,56 @@ if RUN_NOMINAL
     BSON.@save nominal_filename nominal
 end
 
-!@isdefined(nominal) && BSON.@load nominal_filename nominal
+# !@isdefined(nominal) && 
+BSON.@load nominal_filename nominal
+# nominal = fill(0.0005, 4*10^4)
 
-if !RUN_NOMINAL
+global LOAD_GP = false
+
+if LOAD_GP
+    @info "Loading GP..."
+    BSON.@load "gp_lightdark_$(RARE_FAILURE ? "rare" : "nonrare").bson" gp
+elseif !RUN_NOMINAL
     global surrogate, weights, X_failures, ml_failure, p_failure, gp, T
 
-    N = RARE_FAILURE ? Int(1.5*10^4) : 3000
-    T = N÷3
-    nominalN = RARE_FAILURE ? 4*10^4 : length(nominal)
-    surrogate, weights = bayesian_safety_validation(
-                            system_params, models;
-                            T=T,
-                            λ=RARE_FAILURE ? 0.1 : 1, # 0.5,
-                            αᵤ=RARE_FAILURE ? 10 : 2, # 10
-                            αᵦ=RARE_FAILURE ? 10 : 0,
-                            sample_from_acquisitions=[true,true,true],
-                            self_normalizing=true,
-                            sample_temperature=RARE_FAILURE ? 0.25 : 1, # 0.8 is nice.
-                            frs_loosening=true,
-                            show_plots=false,
-                            show_p_estimates=true,
-                            show_num_failures=true,
-                            print_p_estimates=true,
-                            nominal=nominal[1:nominalN])
-                            # nominal=nominal[1:3T])
-    X_failures = falsification(surrogate.x, surrogate.y)
-    ml_failure = most_likely_failure(surrogate.x, surrogate.y, models)
-    p_failure  = p_estimate(surrogate, models; weights)
+    for seed in 1:1
+        # N = RARE_FAILURE ? Int(1.5*10^4) : 300 # 3000
+        N = RARE_FAILURE ? Int(5000*3) : 300 # 3000
+        T = N÷3
+        nominalN = RARE_FAILURE ? 4*10^4 : length(nominal)
+        surrogate, weights = bayesian_safety_validation(
+                                system_params, models;
+                                T=T,
+                                λ=RARE_FAILURE ? 0.1 : 1, # 0.5,
+                                αᵤ=RARE_FAILURE ? 10 : 2, # 10
+                                αᵦ=RARE_FAILURE ? 10 : 0,
+                                sample_from_acquisitions=[true,true,true],
+                                self_normalizing=true,
+                                # sample_temperature=RARE_FAILURE ? 0.25 : 1, # 0.8 is nice.
+                                sample_temperature=RARE_FAILURE ? 0.5 : 1, # 0.8 is nice.
+                                frs_loosening=true,
+                                show_plots=false,
+                                plot_every=10,
+                                show_p_estimates=true,
+                                show_num_failures=true,
+                                print_p_estimates=true,
+                                nominal=nominal[1:nominalN])
+                                # nominal=nominal[1:3T])
+        X_failures = falsification(surrogate.x, surrogate.y)
+        ml_failure = most_likely_failure(surrogate.x, surrogate.y, models)
+        p_failure  = p_estimate(surrogate, models; weights)
 
-    gp = surrogate
-    BSON.@save "gp_lightdark_$(RARE_FAILURE ? "rare" : "nonrare").bson" gp
+        gp = surrogate
+        BSON.@save "gp_lightdark_$(RARE_FAILURE ? "rare" : "nonrare")_$seed.bson" gp
+        BSON.@save "weights_lightdark_$(RARE_FAILURE ? "rare" : "nonrare")_$seed.bson" weights
 
-    compute_metrics(gp, models, system_params; weights)
+        compute_metrics(gp, models, system_params; weights)
 
-    plot1d(gp, models)
-    #==#
-    num_samples, p_estimates, p_estimate_confs = recompute_p_estimates(gp, models; weights)
-    plot_p_estimates(num_samples, p_estimates, p_estimate_confs; nominal=nominal[1:nominalN], full_nominal=true, gpy=gp.y, scale=1.5, logscale=false)
-    # plot_p_estimates(1:N, fill(0.0,N), fill(NaN, N); nominal=nominal[1:4*10^4], full_nominal=true)
-    #==#
+        plot1d(gp, models) |> display
+        #==#
+        num_samples, p_estimates, p_estimate_confs = recompute_p_estimates(gp, models; weights)
+        plot_p_estimates(num_samples, p_estimates, p_estimate_confs; nominal=nominal[1:nominalN], full_nominal=false, gpy=gp.y, scale=1.5, logscale=false)
+        # plot_p_estimates(1:N, fill(0.0,N), fill(NaN, N); nominal=nominal[1:4*10^4], full_nominal=true)
+        #==#
+    end
 end
