@@ -1,32 +1,38 @@
 """
 p(fail) estimate across uniform space of the Gaussian process.
 """
-function p_estimate(gp, models; num_steps=500, m=fill(num_steps, length(models)), grid=true, hard=true)
-    if grid
-        X = make_broadcastable_grid(models, m)
-        w = broadcast((x...)->prod([pdf(model.distribution, xx) for (xx, model) in zip(x, models)]), X...)
+function p_estimate(gp, models; weights=missing, num_steps=500, m=fill(num_steps, length(models)), grid=true, hard=true)
+    if !ismissing(weights)
+        p_fail, p_fail_conf = is_self_normalizing_mean_and_conf(gp, weights)
     else
-        U = [Uniform(model.range[1], model.range[end]) for model in models]
-        X = [rand(u, n) for (u, n) in zip(U, m)]
-        X = make_broadcastable_grid(X)
-        w = broadcast((x...)->prod([pdf(model.distribution, xx) / pdf(u, xx) for (xx, model, u) in zip(x, models, U)]), X...)
+        p_fail_conf = NaN
+        if grid
+            X = make_broadcastable_grid(models, m)
+            w = broadcast((x...)->prod([pdf(model.distribution, xx) for (xx, model) in zip(x, models)]), X...)
+        else
+            U = [Uniform(model.range[1], model.range[end]) for model in models]
+            X = [rand(u, n) for (u, n) in zip(U, m)]
+            X = make_broadcastable_grid(X)
+            w = broadcast((x...)->prod([pdf(model.distribution, xx) / pdf(u, xx) for (xx, model, u) in zip(x, models, U)]), X...)
+        end
+        w = reshape(w, :)
+        f_is = hard ? g_gp : f_gp
+        Y = broadcast((x...)->f_is(gp, [x...]), X...)
+        Y = reshape(Y, :)
+        if grid
+            p_fail = w'Y / sum(w)
+        else
+            p_fail = 1/length(w) * sum(w[i] * Y[i] for i in eachindex(w))
+        end
     end
-    w = reshape(w, :)
-    f_is = hard ? g_gp : f_gp
-    Y = broadcast((x...)->f_is(gp, [x...]), X...)
-    Y = reshape(Y, :)
-    if grid
-        return w'Y / sum(w)
-    else
-        return 1/length(w) * sum(w[i] * Y[i] for i in eachindex(w))
-    end
+    return p_fail, p_fail_conf
 end
 
 """
 Return mean and variance of `N` different importance sampling estimates of p(fail).
 """
 function lw_statistics(gp, models; N=1, m=fill(500, length(models)))
-    lw_ests = [p_estimate(gp, models; m, grid=false) for _ in 1:N]
+    lw_ests = [p_estimate(gp, models; m, grid=false)[1] for _ in 1:N]
     μ = mean(lw_ests)
     σ² = var(lw_ests)
     return μ, σ²

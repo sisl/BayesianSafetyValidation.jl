@@ -4,16 +4,20 @@ using Reexport
 using Alert
 using ColorSchemes
 @reexport using Distributions
-using GaussianProcesses
+using AbstractGPs
+import AbstractGPs.KernelFunctions: ColVecs, SqExponentialKernel
 using KernelDensity
+using GaussianProcesses
 using LatinHypercubeSampling
 using LinearAlgebra
-using Optim
+@reexport using Optim
 @reexport using Parameters
-using Plots
+@reexport using Plots
+using ProgressMeter
 using Random
 using Sobol
 using StatsBase
+using StatsFuns
 using Suppressor
 
 include("parameters.jl")
@@ -40,13 +44,16 @@ export
     OperationalParameters,
 
     ## surrogate_model.jl
+    Surrogate,
     logit,
     inverse_logit,
     transform,
     inverse_transform,
     apply,
     inverse,
+    initialize_gp,
     gp_fit,
+    gp_fit!,
     predict_f_vec,
     f_gp,
     σ²_gp,
@@ -94,6 +101,8 @@ export
     compute_metrics,
 
     ## plotting.jl
+    set_colors!,
+    reset_colors!,
     get_model_ranges,
     plot_data!,
     plot_soft_boundary,

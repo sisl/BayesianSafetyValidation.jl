@@ -9,14 +9,6 @@ system_params = DummyHimmelblauProbabilitySystem()
 θ2 = OperationalParameters("x_2", [-6, 6], Uniform(-6, 6))
 models = [θ1, θ2]
 
-function System.reset(sparams::DummyHimmelblauProbabilitySystem) end
-
-function System.initialize(; kwargs...) end
-
-function System.generate_input(sparams::DummyHimmelblauProbabilitySystem, sample::Vector; kwargs...)
-    return sample
-end
-
 f_himmelblau_prob(sparams::DummyHimmelblauProbabilitySystem, x; fx=himmelblau(x)) = inverse_logit(sparams.γ - fx; s=1/sparams.γ)
 
 function System.evaluate(sparams::DummyHimmelblauProbabilitySystem, inputs::Vector; verbose=false, kwargs...)

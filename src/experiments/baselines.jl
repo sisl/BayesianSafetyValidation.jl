@@ -29,7 +29,7 @@ end
 Helper to get next number in the Sobol sequence and scale it to a domain.
 """
 function next_sobol!(sobol; min=[-5,-5], max=[5,5])
-	x = next!(sobol)
+	x = Sobol.next!(sobol)
 	return x .* (max-min) + min
 end
 
@@ -61,10 +61,10 @@ end
 """
 Run baseline function `baseline` evaluated across function `f`.
 """
-function run_baseline(f, baseline, models, N)
+function run_baseline(f, baseline, models, N; gp_args)
     X = baseline(models, N)
     Y = f(collect(eachcol(X))) # run all at once as Vector of inputs
-    gp = gp_fit(X, Y)
+    gp = gp_fit(X, Y; gp_args...)
     return gp
 end
 
@@ -72,7 +72,7 @@ end
 """
 Run all baseline functions evaluated across `f`.
 """
-function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_plots=true, input_discretization_steps=500)
+function run_baselines(gp, sparams, models, N; is=false, copmute_truth=true, show_truth=true, show_plots=true, input_discretization_steps=500, show_data=true, data_ms=4, use_circles=false, soft=true, gp_args=DEFAULT_GP_ARGS, tight=false)
     baselines = Dict{Any, Any}(
         "discrete"=>baseline_discrete,
         "uniform"=>baseline_uniform,
@@ -98,14 +98,17 @@ function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_p
     for (k,v) in baselines
         @info "Running baseline $k"
         baseline = v
-        baseline_gp = run_baseline(f, baseline, models, N)
-        # baseline_gp = @suppress run_baseline(f, baseline, models, N)
+        baseline_gp = run_baseline(f, baseline, models, N; gp_args)
+        # baseline_gp = @suppress run_baseline(f, baseline, models, N; gp_args)
         baselines[k] = baseline_gp # overwrite function with Gaussian procces object.
     end
-    errors, estimates, num_failures, failure_rates, ℓ_most_likely_failures, coverage_metrics, region_metrics = test_baselines(baselines, models, sparams, truth; input_discretization_steps)
 
-    if !isnothing(gp)
-        est = is ? is_estimate_q(gp, models) : p_estimate(gp, models, num_steps=input_discretization_steps)
+    if copmute_truth
+        errors, estimates, num_failures, failure_rates, ℓ_most_likely_failures, coverage_metrics, region_metrics = test_baselines(baselines, models, sparams, truth; input_discretization_steps)
+    end
+
+    if !isnothing(gp) && copmute_truth
+        est = is ? is_estimate_q(gp, models) : p_estimate(gp, models, num_steps=input_discretization_steps)[1]
         gp_error = est - truth
         gp_num_failures = sum(gp.y .>= 0) # logits
         gp_failure_rate = gp_num_failures / length(gp.y)
@@ -120,11 +123,15 @@ function run_baselines(gp, sparams, models, N; is=false, show_truth=true, show_p
         ℓ_most_likely_failures["GP"] = gp_ℓ_most_likely_failure
         coverage_metrics["GP"] = gp_coverage_metric
         region_metrics["GP"] = gp_region_metric
+    else
+        errors = estimates = num_failures = failure_rates = ℓ_most_likely_failures = coverage_metrics = region_metrics = nothing
     end
 
-    display(sort(errors, lt=(x1,x2)->isless(abs(errors[x1]), abs(errors[x2])))) # absolute errors sorted
+    if show_truth && copmute_truth
+        display(sort(errors, lt=(x1,x2)->isless(abs(errors[x1]), abs(errors[x2])))) # absolute errors sorted
+    end
     if show_plots
-        plot_baselines(gp, sparams, baselines, models; errors, show_truth) |> display
+        plot_baselines(gp, sparams, baselines, models; show_truth, show_data, data_ms, use_circles, soft, tight) |> display
     end
     return baselines, errors, estimates, num_failures, failure_rates, ℓ_most_likely_failures, coverage_metrics, region_metrics
 end
@@ -142,7 +149,7 @@ function test_baselines(baselines::Dict, models, sparams, truth=0; is=false, inp
     coverage_metrics = Dict()
     region_metrics = Dict()
     for (k,v) in baselines
-        est = is ? is_estimate_q(v, models) : p_estimate(v, models; num_steps=input_discretization_steps)
+        est = is ? is_estimate_q(v, models) : p_estimate(v, models; num_steps=input_discretization_steps)[1]
         err = est - truth
         num_failures = sum(v.y .>= 0) # logits
         failure_rate = num_failures / length(v.y)
@@ -189,24 +196,43 @@ end
 
 
 
-function plot_baselines(gp, sparams, baselines, models; errors=nothing, show_truth=true)
+function plot_baselines(gp, sparams, baselines, models; show_truth=true, show_data=true, data_ms=4, use_circles=false, soft=true, tight=false, titlefontsize=24)
     plots = []
     rd = 6
+    casing = Dict(
+        "lhc"=>"LHC",
+        "sobol"=>"Sobol",
+        "discrete"=>"Discrete",
+        "uniform"=>"Uniform$(all(isa(model.distribution, Distributions.Uniform) for model in models) ? " (Nominal)" : "")",
+    )
     for (k,v) in baselines
-        plt = plot_soft_boundary(v, models)
-        plot!(title=k, colorbar=false)
+        if soft
+            plt = plot_soft_boundary(v, models; show_data, tight, ms=data_ms, use_circles)
+        else
+            plt = plot_hard_boundary(v, models; show_data, tight, ms=data_ms, use_circles)
+        end
+        plot!(; title=casing[k], titlefontsize, colorbar=false)
         push!(plots, plt)
     end
-    plot_soft_boundary(gp, models)
+    if soft
+        plot_soft_boundary(gp, models; show_data, tight, ms=data_ms, use_circles)
+    else
+        plot_hard_boundary(gp, models; show_data, tight, ms=data_ms, use_circles)
+    end
     gp_title = "Bayesian safety validation"
-    plt = plot!(title=gp_title, colorbar=false)
+    plt = plot!(; title=gp_title, titlefontsize, colorbar=false)
     push!(plots, plt)
 
     if show_truth
-        plot_truth(sparams, models)
-        plt = plot!(title="truth", colorbar=false)
+        plot_truth(sparams, models; hard=!soft, tight, edges=true)
+        plt = plot!(; title="Truth", titlefontsize, colorbar=false)
         push!(plots, plt)
     end
 
-    plot(plots..., layout=(1,length(plots)), size=(450*length(plots), 400), margin=5Plots.mm)
+    if tight
+        size = (450*length(plots), 460)
+    else
+        size = (450*length(plots), 400)
+    end
+    plot(plots...; layout=(1,length(plots)), size, margin=5Plots.mm)
 end

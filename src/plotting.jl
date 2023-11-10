@@ -1,7 +1,15 @@
-Plots.default(fontfamily="Computer Modern", framestyle=:box, palette=palette(:darkrainbow))
+Plots.default(fontfamily="Times", framestyle=:box, palette=palette(:darkrainbow))
 
-COLOR_FAIL = cgrad([:green, :white, :red])
-COLOR_FAIL3 = cgrad([:green, :white, :red], categorical=true)
+global DEFAULT_COLOR_FAIL = cgrad(["#007662", :white, "#8c1515"]) # cgrad([:green, :white, :red])
+global COLOR_FAIL = DEFAULT_COLOR_FAIL
+
+function set_colors!(colors)
+    global COLOR_FAIL = cgrad(colors)
+end
+
+function reset_colors!()
+    global COLOR_FAIL = DEFAULT_COLOR_FAIL
+end
 
 
 """
@@ -12,16 +20,29 @@ function get_model_ranges(models, m=fill(200, length(models)))
 end
 
 
+get_lower_bounds(models) = [model.range[1] for model in models]
+get_upper_bounds(models) = [model.range[2] for model in models]
+
+
 """
 Plot actual data points ran through the system.
 Green indicates non-failure, red indicates failure.
 """
-function plot_data!(X, Y; ms=4, plot_inds=[1, 2])
+function plot_data!(X, Y; ms=4, plot_inds=[1, 2], use_circles=false)
+    if use_circles
+        circle(x, y, r) = Plots.Shape(r*sind.(0:10:360) .+ x, r*cosd.(0:10:360) .+ y)
+    end
+
     for i in eachindex(Y)
         k = X[:, i]
         v = Y[i]
-        color = v >= 0 ? :red : :green
-        scatter!([k[plot_inds[1]]], [k[plot_inds[2]]], c=color, ms=ms, marker=:square, label=false)
+        color = v >= 0 ? COLOR_FAIL[end] : COLOR_FAIL[1]
+        if use_circles
+            circles = circle.([k[plot_inds[1]]], [k[plot_inds[2]]]..., (ms,))
+            plot!(circles, ratio=1, fc=:transparent, lc=:lightgray, lw=1, label=false)
+        else
+            scatter!([k[plot_inds[1]]], [k[plot_inds[2]]], c=color, ms=ms, marker=:square, label=false)
+        end
     end
     return plot!()
 end
@@ -30,7 +51,7 @@ end
 """
 Plot prediction of the GP as a soft decision boundary between [0,1].
 """
-function plot_soft_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), show_data=true, overlay=false, overlay_levels=50, ms=4, lw=0, tight=false) # lw=0.2
+function plot_soft_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), show_data=true, use_circles=false, overlay=false, overlay_levels=50, ms=4, lw=0, tight=false) # lw=0.2
     y = gp_output(gp, models; m)[inds...]
     s1, s2 = findall(isequal(:), inds)
     full_models = [models[s1], models[s2]]
@@ -41,7 +62,7 @@ function plot_soft_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2).
         @suppress contour!(model_ranges[1], model_ranges[2], p, c=cgrad([:gray, :black, :black, :white], 10, categorical=true, scale=:exp, rev=false), levels=overlay_levels)
     end
     if show_data
-        plot_data!(gp.x, gp.y; ms, plot_inds=[s1, s2])
+        plot_data!(gp.x, gp.y; ms, plot_inds=[s1, s2], use_circles)
     end
     if tight
         return plot!(cbar=false, ticks=false, xlabel="", ylabel="", title="", size=(400,400))
@@ -54,7 +75,7 @@ end
 """
 Plot prediction of the GP as a hard decision boundary of either [0,1] given threshold of 0.5
 """
-function plot_hard_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), show_data=true, overlay=false, overlay_levels=50, ms=4, tight=false, lw=1)
+function plot_hard_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), show_data=true, use_circles=false, overlay=false, overlay_levels=50, ms=4, tight=false, lw=1)
     y = gp_output(gp, models; m)[inds...]
     s1, s2 = findall(isequal(:), inds)
     full_models = [models[s1], models[s2]]
@@ -65,7 +86,7 @@ function plot_hard_boundary(gp, models; inds=[:, :, fill(1, length(models) - 2).
         @suppress contour!(model_ranges[1], model_ranges[2], p, c=cgrad([:gray, :black, :black, :white], 10, categorical=true, scale=:exp, rev=false), levels=overlay_levels)
     end
     if show_data
-        plot_data!(gp.x, gp.y; ms, plot_inds=[s1, s2])
+        plot_data!(gp.x, gp.y; ms, plot_inds=[s1, s2], use_circles)
     end
     if tight
         return plot!(cbar=false, ticks=false, xlabel="", ylabel="", title="", size=(400,400))
@@ -78,15 +99,16 @@ end
 """
 Plot true function `f`
 """
-function plot_truth(sparams, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), overlay=false, overlay_levels=50, use_heatmap=false, tight=false, hard=false, lw=1)
+function plot_truth(sparams, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), overlay=false, overlay_levels=50, use_heatmap=false, tight=false, hard=false, lw=1, edges=false)
     model_ranges = get_model_ranges(models, m)
     s1, s2 = findall(isequal(:), inds)
     function f(x...)
         fx = @suppress System.evaluate(sparams, [x])[1]
         return hard ? fx >= 0.5 : fx
     end
-    params = [collect(r[d]) for (r, d) in zip(model_ranges, inds)]
+    params = Any[collect(r[d]) for (r, d) in zip(model_ranges, inds)]
     params[s1] = params[s1]'
+
     y = f.(params...)
 
     plot_f = use_heatmap ? heatmap : contourf
@@ -94,6 +116,9 @@ function plot_truth(sparams, models; inds=[:, :, fill(1, length(models) - 2)...]
     if overlay
         p(x,y) = pdf(models[s1].distribution, x) * pdf(models[s2].distribution, y)
         @suppress contour!(model_ranges[s1], model_ranges[s2], p, c=cgrad([:gray, :black, :black, :white], 10, categorical=true, scale=:exp, rev=false), levels=overlay_levels)
+    end
+    if edges
+        scatter!([model_ranges[1][1], model_ranges[1][end]], [model_ranges[1][1], model_ranges[1][end]], label=false, ms=0)
     end
     if tight
         return plot!(cbar=false, ticks=false, xlabel="", ylabel="", title="", size=(400,400))
@@ -126,7 +151,7 @@ function plot_acquisition(y, F̂, P, models; inds=[:, :, fill(1, length(models) 
     end
     if all(isnan.(acq_output))
         @warn "All NaNs in acquisition function, setting to all zeros."
-        acq_output = size(zeros(acq_output))
+        acq_output = zeros(size(acq_output))
     end
     if zero_white
         acq_output[acq_output .== 0] .= NaN
@@ -167,16 +192,16 @@ function plot_model(model, m=500; rotated=false, left=false, label=false, fill=t
     X = [X[1], X..., X[end]]
     if rotated
         if left
-            plt = plot(Y, X, fill=fill, fillalpha=alpha, label=label, xaxis=:flip, xrotation=90, c=:gray)
+            plt = plot(Y, X, fill=fill, fillalpha=alpha, label=label, legendfont=(12, "Computer Modern"), xaxis=:flip, xrotation=90, c=:gray)
         else
-            plt = plot(Y, X, fill=fill, fillalpha=alpha, label=label, c=:gray)
+            plt = plot(Y, X, fill=fill, fillalpha=alpha, label=label, legendfont=(12, "Computer Modern"), c=:gray)
         end
         if tight
             plot!(xticks=false)
         end
         xlims!(0, maximum(Y)*limscale)
     else
-        plt = plot(X, Y, fill=fill, fillalpha=alpha, label=label, c=:gray)
+        plt = plot(X, Y, fill=fill, fillalpha=alpha, label=label, legendfont=(12, "Computer Modern"), c=:gray)
         if tight
             plot!(yticks=false)
         end
@@ -237,8 +262,8 @@ function plot_combined(gp, models, sparams; inds=[:, :, fill(1, length(models) -
         else
             plt_main = plot_acquisition(y, F̂, P, models; inds, acq, return_point=false, show_point=false)
         end
-        xlabel!(label1)
-        ylabel!(label2)
+        xlabel!(label1, legendfont=(12, "Computer Modern"))
+        ylabel!(label2, legendfont=(12, "Computer Modern"))
         if isnothing(title)
             title!("acquisition")
         else
@@ -247,7 +272,7 @@ function plot_combined(gp, models, sparams; inds=[:, :, fill(1, length(models) -
     end
 
     if tight
-        plt_main = plot!(plt_main, ticks=false, xlabel="", ylabel="", title=hide_model ? title : "", titlefontsize=titlefontsize)
+        plt_main = plot!(plt_main, ticks=false, xlabel="", ylabel="", title=hide_model ? title : "", titlefont=(titlefontsize, "Times"))
 
         if add_phantom_point
             # Add phantom scatter to mimic acquisition plot's xy boundaries
@@ -311,7 +336,7 @@ function plot_combined(gp, models, sparams; inds=[:, :, fill(1, length(models) -
             if include_surrogate
                 plt_main = plot!(plt_main, title="truth")
                 plt_gp = plot_hard_boundary(gp, models; inds, m, show_data, ms)
-                plot!(plt_gp, ticks=false, title="surrogate", ylabel="", xlabel="", titlefontsize=titlefontsize, colorbar=false)
+                plot!(plt_gp, ticks=false, title="surrogate", ylabel="", xlabel="", titlefont=(titlefontsize, "Times"), colorbar=false)
                 lo = @layout([_ a{0.17647058823529413h}; b c{0.7w, 0.4117647058823529h}; _ d{0.7w}])
                 return plot(plt_model1, plt_model2, plt_main, plt_gp, layout=lo, size=(400,400*0.3 + 400*0.7*2))
             else
@@ -349,19 +374,19 @@ function plot_surrogate_truth_combined(gp, models, sparams; inds=[:, :, fill(1, 
 
     plt_truth_soft = plot_truth(sparams, models; inds, m, overlay, tight, use_heatmap, hard=false, lw=0)
     phantom_point()
-    title!("truth (soft)", titlefontsize=titlefontsize)
+    title!("truth (soft)", titlefont=(titlefontsize, "Times"))
 
     plt_truth_hard = plot_truth(sparams, models; inds, m, overlay, tight, use_heatmap, hard=true)
     phantom_point()
-    title!("truth (hard)", titlefontsize=titlefontsize)
+    title!("truth (hard)", titlefont=(titlefontsize, "Times"))
 
     plt_surrogate_soft = plot_soft_boundary(gp, models; inds, m, show_data, ms, overlay, tight)
     phantom_point()
-    title!("surrogate (soft)", titlefontsize=titlefontsize)
+    title!("surrogate (soft)", titlefont=(titlefontsize, "Times"))
 
     plt_surrogate_hard = plot_hard_boundary(gp, models; inds, m, show_data, ms, overlay, tight)
     phantom_point()
-    title!("surrogate (hard)", titlefontsize=titlefontsize)
+    title!("surrogate (hard)", titlefont=(titlefontsize, "Times"))
 
     xl = xlims()
     yl = ylims()
@@ -449,8 +474,8 @@ end
 """
 Plot most-likely recorded failure.
 """
-function plot_most_likely_failure(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), return_failure=false, hard=false)
-    hard ? plot_hard_boundary(gp, models; inds, m, show_data=false) : plot_soft_boundary(gp, models; inds, m, show_data=false)
+function plot_most_likely_failure(gp, models; inds=[:, :, fill(1, length(models) - 2)...], num_steps=200, m=fill(num_steps, length(models)), return_failure=false, hard=false, lw=1)
+    hard ? plot_hard_boundary(gp, models; inds, m, show_data=false, lw) : plot_soft_boundary(gp, models; inds, m, show_data=false, lw)
     x = most_likely_failure(gp, models)
     s1, s2 = findall(isequal(:), inds)
     c = :white

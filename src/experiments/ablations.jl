@@ -22,7 +22,7 @@ function run_acquisition_ablation(sparams, models; T=200, seed=0, record_every=1
                 T=T_intermediate,
                 acquisitions_to_run=acqs)
 
-            est = p_estimate(gp, models)
+            est = p_estimate(gp, models)[1]
             gp_error = est - truth
             @info "GP ($acqs): $gp_error"
 

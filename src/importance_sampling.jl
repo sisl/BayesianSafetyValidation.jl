@@ -83,3 +83,20 @@ Self-normalzing importance sampling.
 function is_self_normalizing(gp, W)
     return sum(inverse(gp.y[i]) * W[i] for i in eachindex(gp.y)) / sum(W)
 end
+
+
+"""
+Self-normalizing variance estimate.
+"""
+function is_self_normalizing_var(gp, W; μ=is_self_normalizing(gp, W))
+    wn = W ./ sum(W)
+    return sum(wn[i]^2 * (inverse(gp.y[i]) - μ)^2 for i in eachindex(gp.y))
+end
+is_self_normalizing_std(gp, W; μ=is_self_normalizing(gp, W)) = sqrt(is_self_normalizing_var(gp, W; μ))
+is_self_normalizing_stderr(gp, W; μ=is_self_normalizing(gp, W)) = is_self_normalizing_std(gp, W; μ) / sqrt(length(gp.y))
+is_self_normalizing_conf99(gp, W; μ=is_self_normalizing(gp, W)) = 2.58 * is_self_normalizing_std(gp, W; μ) # NOTE: this is not over sqrt(n), see below eq. (9.9) in Art Owen "Importance sampling", Stanford University, 2013.
+function is_self_normalizing_mean_and_conf(gp, W)
+    μ = is_self_normalizing(gp, W)
+    conf = is_self_normalizing_conf99(gp, W; μ)
+    return μ, conf
+end

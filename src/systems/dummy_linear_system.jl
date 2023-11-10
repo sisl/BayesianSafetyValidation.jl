@@ -8,14 +8,6 @@ system_params = DummyLinearParameters(failure_point_x = [2])
 θ2 = OperationalParameters("y", [0, 10], Normal(5, 1))
 models = [θ1, θ2]
 
-function System.reset(sparams::DummyLinearParameters) end
-
-function System.initialize(; kwargs...) end
-
-function System.generate_input(sparams::DummyLinearParameters, sample::Vector; kwargs...)
-    return sample
-end
-
 function System.evaluate(sparams::DummyLinearParameters, inputs::Vector; kwargs...)
     @info "Evaluating dummy linear system ($inputs)..."
     Y = Vector{Bool}(undef, 0)
