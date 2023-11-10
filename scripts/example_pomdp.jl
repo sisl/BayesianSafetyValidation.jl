@@ -109,10 +109,9 @@ end
 
 global LOAD_GP = true
 
-# N = RARE_FAILURE ? Int(1.5*10^4) : 300 # 3000
-N = RARE_FAILURE ? Int(5000*3) : 900 # 3000
+N = RARE_FAILURE ? Int(5000*3) : 900
 T = N÷3
-nominalN = RARE_FAILURE ? 3*10^4 : 2_000 # length(nominal)
+nominalN = RARE_FAILURE ? 3*10^4 : 2_000
 
 if LOAD_GP
     global gp, weights
@@ -129,12 +128,12 @@ elseif !RUN_NOMINAL
                                 use_abstract_gps=true,
                                 gp_args=(ℓ=nothing,),
                                 T=T,
-                                λ=RARE_FAILURE ? 0.1 : 0.1, # 1,
-                                αᵤ=RARE_FAILURE ? 10 : 0.1, # 2, 1 is good, 0.15
-                                αᵦ=RARE_FAILURE ? 10 : 0.1, # 0, 0.15
+                                λ=RARE_FAILURE ? 0.1 : 0.1,
+                                αᵤ=RARE_FAILURE ? 10 : 0.1,
+                                αᵦ=RARE_FAILURE ? 10 : 0.1,
                                 sample_from_acquisitions=[true,true,true],
                                 self_normalizing=true,
-                                sample_temperature=RARE_FAILURE ? 0.5 : 0.5, # 1, 0.8, 0.7
+                                sample_temperature=RARE_FAILURE ? 0.5 : 0.5,
                                 frs_loosening=true,
                                 show_plots=false,
                                 plot_every=10,
@@ -142,7 +141,6 @@ elseif !RUN_NOMINAL
                                 show_num_failures=true,
                                 print_p_estimates=true,
                                 nominal=nominal[1:nominalN])
-                                # nominal=nominal[1:3T])
         X_failures = falsification(surrogate.x, surrogate.y)
         ml_failure = most_likely_failure(surrogate.x, surrogate.y, models)
         p_failure  = p_estimate(surrogate, models; weights)
@@ -154,10 +152,7 @@ elseif !RUN_NOMINAL
         compute_metrics(gp, models, system_params; weights)
 
         plot1d(gp, models) |> display
-        #==#
         num_samples, p_estimates, p_estimate_confs = recompute_p_estimates(gp, models; weights)
         plot_p_estimates(num_samples, p_estimates, p_estimate_confs; nominal=nominal[1:nominalN], full_nominal=true, gpy=gp.y, scale=1.5, logscale=RARE_FAILURE)
-        # plot_p_estimates(1:N, fill(0.0,N), fill(NaN, N); nominal=nominal[1:4*10^4], full_nominal=true)
-        #==#
     end
 end
