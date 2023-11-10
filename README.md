@@ -12,6 +12,11 @@ Estimate the probability of failure iteratively using a Gaussian process surroga
 }
 ```
 
+Baseline comparison on a complex failure region shape fitting the same GP using 300 selected points (from the `src/systems/dummy_shape_system.jl` example).
+<img src="./media/aircraft_fit.png">
+
+
+The algorithmic details can be seen in this diagram:
 <img src="./media/diagram.png">
 
 
@@ -86,11 +91,6 @@ ml_failure = most_likely_failure(surrogate.x, surrogate.y, model)
 p_failure  = p_estimate(surrogate, model)
 ```
 
-
-## Visualizations
-
-Baseline comparison on a complex failure region shape fitting the same GP using 300 selected points (from the `src/systems/dummy_shape_system.jl` example):
-<img src="./media/aircraft_fit.png">
 
 Four different iterations of BSV testing a runway detection algorithm in the X-Plane simulator:
 <img src="./media/example_plot.png">
