@@ -2,8 +2,9 @@
 Main algorithm: iterative sample points and re-fit the Gaussian process surrogate model.
 """
 function bayesian_safety_validation(sparams, models;
-                            gp_args=(σ=exp(-0.1),),
-                            gp=initialize_gp(; gp_args...),
+                            use_abstract_gps=false,
+                            gp_args=use_abstract_gps ? (σ=exp(-0.1),) : (ν=1/2, ll=-0.1, lσ=-0.1, opt=false),
+                            gp=use_abstract_gps ? initialize_gp(; gp_args...) : nothing,
                             T=1,
                             λ=0.1, # UCB
                             αᵤ=Inf, # decay rate for uncertainty exploration (Inf disables operational model influence)
@@ -12,6 +13,8 @@ function bayesian_safety_validation(sparams, models;
                             seed=0,
                             initialize_system=false,
                             reset_system=true,
+                            use_optim=false,
+                            optim_options=Optim.Options(g_tol=1e-6, iterations=100),
                             hard_is_estimate=true,
                             self_normalizing=false,
                             frs_loosening=false,
@@ -43,6 +46,7 @@ function bayesian_safety_validation(sparams, models;
                             p_estimate_discretization_steps=d,
                             match_original=false,
                             nominal=missing,
+                            verbose=true,
                             kwargs...)
     try
         Random.seed!(seed)
@@ -54,7 +58,7 @@ function bayesian_safety_validation(sparams, models;
             p_estimates_conf = []
         end
 
-        if isempty(gp.y)
+        if (use_abstract_gps && isempty(gp.y)) || isnothing(gp)
             initialize_system && System.initialize(sparams)
             reset_system && System.reset(sparams)
 
@@ -63,6 +67,9 @@ function bayesian_safety_validation(sparams, models;
             Y = Float64[]
 
             #= Surrogate modeling =#
+            if !use_abstract_gps
+                gp = gp_fit(gp, X, Y; gp_args...)
+            end
             t_offset = 0
         else
             X = gp.x
@@ -95,52 +102,71 @@ function bayesian_safety_validation(sparams, models;
         end
 
         #= Failure boundary refinement =#
-        for t in (1+t_offset):(T+t_offset)
+        @conditional_progress !verbose for t in (1+t_offset):(T+t_offset)
             inputs = []
             acq_plts = []
             plotting_condition = t % plot_every == 0
 
             if !refit_every_point
-                # Precompute GP prediction to pass to each acquisition function (faster)
-                F̂ = gp_output(gp, models; num_steps=input_discretization_steps, f=predict_f_vec)
-
-                # Precompute operational likelihood over domain (faster)
-                P = p_output(models; num_steps=input_discretization_steps)
-            end
-
-            println("\n", "-"^40)
-            is_frs = false
-            for a in acquisitions_to_run
-                if refit_every_point
-                    inputs = []
-                    # Recompute
+                if !use_optim || ((show_acquisition_plots || show_combined_plot || show_tight_combined_plot) && plotting_condition)
+                    # Precompute GP prediction to pass to each acquisition function (faster)
                     F̂ = gp_output(gp, models; num_steps=input_discretization_steps, f=predict_f_vec)
+
+                    # Precompute operational likelihood over domain (faster)
                     P = p_output(models; num_steps=input_discretization_steps)
                 end
-                @info "Refinement iteration $t/$T (acquisition $a)"
+            end
+
+            verbose && println("\n", "-"^40)
+            is_frs = false
+            @conditional_time verbose for a in acquisitions_to_run
+                if refit_every_point
+                    inputs = []
+                    if !use_optim || ((show_acquisition_plots || show_combined_plot || show_tight_combined_plot) && plotting_condition)
+                        # Recompute
+                        F̂ = gp_output(gp, models; num_steps=input_discretization_steps, f=predict_f_vec)
+                        P = p_output(models; num_steps=input_discretization_steps)
+                    end
+                end
+                verbose && @info "Refinement iteration $t/$T (acquisition $a)"
                 if a == 1
                     if any(Y .== 1) && single_failure_mode
                         @warn "Skipping exploration (single failure mode found)."
                         continue # skip exploration when a failure is already found (NOTE: only in `single_failure_mode`)
                     end
-                    acq = (μ_σ²,p)->uncertainty_acquisition(μ_σ², p; t, α=αᵤ)
                     sample_from_acquisition = sample_from_acquisitions[1]
+                    acq_plt = (μ_σ²,p)->uncertainty_acquisition(μ_σ², p; t, α=αᵤ)
+                    if use_optim && !sample_from_acquisition
+                        acq = x->uncertainty_acquisition(gp, x, models; t, α=αᵤ)
+                    else
+                        acq = acq_plt
+                    end
                     is_frs = false
                 elseif a == 2
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure boundary."
                         continue
                     end
-                    acq = (μ_σ²,p)->boundary_acquisition(μ_σ², p; λ, t, α=αᵦ)
                     sample_from_acquisition = sample_from_acquisitions[2]
+                    acq_plt = (μ_σ²,p)->boundary_acquisition(μ_σ², p; λ, t, α=αᵦ)
+                    if use_optim && !sample_from_acquisition
+                        acq = x->boundary_acquisition(gp, x, models; λ, t, α=αᵦ)
+                    else
+                        acq = acq_plt
+                    end
                     is_frs = false
                 elseif a == 3
                     if !any(Y .== 1) && skip_if_no_failures
                         @warn "No failures found, skipping acquisition for failure distribution."
                         continue
                     end
-                    acq = (μ_σ²,p,loosen_thresh=false)->failure_region_sampling_acquisition(μ_σ², p; λ, probability_valued_system, loosen_thresh)
+                    acq_plt = (μ_σ²,p,loosen_thresh=false)->failure_region_sampling_acquisition(μ_σ², p; λ, probability_valued_system, loosen_thresh)
                     sample_from_acquisition = sample_from_acquisitions[3]
+                    if use_optim && !sample_from_acquisition
+                        acq = x->failure_region_sampling_acquisition(gp, x, models; λ, probability_valued_system)
+                    else
+                        acq = acq_plt
+                    end
                     is_frs = frs_loosening
                 else
                     error("No acquisition function defined for a=$a")
@@ -160,7 +186,11 @@ function bayesian_safety_validation(sparams, models;
                         end
                     end
                 else
-                    next_point_and_weight = get_next_point(y, F̂, P, models; acq, match_original, return_weight=self_normalizing, is_frs)
+                    if use_optim
+                        next_point_and_weight = get_next_point(models; acq, return_weight=self_normalizing, options=optim_options)
+                    else
+                        next_point_and_weight = get_next_point(y, F̂, P, models; acq, match_original, return_weight=self_normalizing, is_frs)
+                    end
                     if self_normalizing
                         if !all(sample_from_acquisitions)
                             error("Please make sure all acquisition functions are sampled from to use Self-normalzing importance sampling (see `sample_from_acquisitions`)")
@@ -173,11 +203,10 @@ function bayesian_safety_validation(sparams, models;
                     X = append_sample(X, next_point; t)
                 end
 
-
                 if (show_acquisition_plots || show_combined_plot || show_tight_combined_plot) && plotting_condition
                     plt_gp = plot_soft_boundary(gp, models; num_steps=input_discretization_steps)
                     next_point_ms = (show_combined_plot || show_tight_combined_plot) ? 3 : 5
-                    plt_acq = plot_acquisition(y, F̂, P, models; acq, zero_white=sample_from_acquisition, given_next_point=sample_from_acquisition ? next_points[1] : next_point, ms=next_point_ms, tight=show_tight_combined_plot)
+                    plt_acq = plot_acquisition(y, F̂, P, models; acq=acq_plt, zero_white=sample_from_acquisition, given_next_point=sample_from_acquisition ? next_points[1] : next_point, ms=next_point_ms, tight=show_tight_combined_plot)
                     if (show_combined_plot || show_tight_combined_plot)
                         push!(acq_plts, plt_acq)
                     elseif show_acquisition_plots
@@ -201,16 +230,22 @@ function bayesian_safety_validation(sparams, models;
                 if refit_every_point
                     Y′ = System.evaluate(sparams, inputs; subdir=t, kwargs...)
                     Y = vcat(Y, Y′)
-                    @time gp_fit!(gp, X, Y)
+                    gp = gp_fit(gp, X, Y)
                 end
             end
 
             # TODO: Separate function.
             if ((show_combined_plot || show_tight_combined_plot) && ((only_plot_last && t == T) || !only_plot_last)) && plotting_condition
                 acq_titlefontsize = show_tight_combined_plot ? 12 : 10
-                acq_plts[1] = plot(acq_plts[1], title="uncertainty exploration", titlefontsize=acq_titlefontsize)
-                acq_plts[2] = plot(acq_plts[2], title="boundary refinement", titlefontsize=acq_titlefontsize)
-                acq_plts[3] = plot(acq_plts[3], title="failure region sampling", titlefontsize=acq_titlefontsize)
+                if 1 in acquisitions_to_run
+                    acq_plts[1] = plot(acq_plts[1], title="uncertainty exploration", titlefontsize=acq_titlefontsize)
+                end
+                if 2 in acquisitions_to_run
+                    acq_plts[2] = plot(acq_plts[2], title="boundary refinement", titlefontsize=acq_titlefontsize)
+                end
+                if 3 in acquisitions_to_run
+                    acq_plts[3] = plot(acq_plts[3], title="failure region sampling", titlefontsize=acq_titlefontsize)
+                end
 
                 if show_tight_combined_plot
                     plt = plot_combined(gp, models, sparams; num_steps=input_discretization_steps, surrogate=true, show_data=true, title="surrogate", titlefontsize=show_tight_combined_plot ? acq_titlefontsize : 18, tight=show_tight_combined_plot, acq_plts, hide_model=hide_model_after_first && t > 1, add_phantom_point=true, latex_labels)
@@ -238,7 +273,7 @@ function bayesian_safety_validation(sparams, models;
             if !refit_every_point
                 Y′ = System.evaluate(sparams, inputs; subdir=t, kwargs...)
                 Y = vcat(Y, Y′)
-                @time gp_fit!(gp, X, Y)
+                gp = gp_fit(gp, X, Y)
             end
 
             if show_plots && !show_acquisition_plots && plotting_condition
@@ -305,7 +340,7 @@ function run_single_sample(gp, models, sparams, sample; subdir="test")
     X = hcat(gp.x, sample)
     Y′ = System.evaluate(sparams, inputs; subdir=subdir)
     Y = vcat(gp.y, Y′)
-    gp_fit!(gp, X, Y)
+    gp = gp_fit(gp, X, Y)
     display(plot_soft_boundary(gp, models))
     return gp
 end

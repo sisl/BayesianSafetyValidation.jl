@@ -89,6 +89,8 @@ p_failure  = p_estimate(surrogate, model)
 
 ## Visualizations
 
-Below is an example from `src/systems/dummy_booth_system.jl`:
+Baseline comparison on a complex failure region shape fitting the same GP using 300 selected points (from the `src/systems/dummy_shape_system.jl` example):
+<img src="./media/aircraft_fit.png">
 
+Four different iterations of BSV testing a runway detection algorithm in the X-Plane simulator:
 <img src="./media/example_plot.png">

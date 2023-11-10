@@ -24,3 +24,29 @@ function smooth(v, weight = 0.6)
     end
     return smoothed
 end
+
+"""
+Run @time on expression based on `verbose` flag.
+"""
+macro conditional_time(verbose, expr)
+    esc(quote
+        if $verbose
+            @time $expr
+        else
+            $expr
+        end
+    end)
+end
+
+"""
+Run @show_progress on expression based on `verbose` flag.
+"""
+macro conditional_progress(verbose, expr)
+    esc(quote
+        if $verbose
+            @showprogress $expr
+        else
+            $expr
+        end
+    end)
+end

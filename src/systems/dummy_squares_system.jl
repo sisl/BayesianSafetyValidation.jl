@@ -73,5 +73,5 @@ end
 
 
 function dummy_error(gp, sparams, models)
-    p_estimate(gp, models) - dummy_true_pfail(sparams, models)
+    p_estimate(gp, models)[1] - dummy_true_pfail(sparams, models)
 end

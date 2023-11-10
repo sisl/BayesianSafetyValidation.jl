@@ -175,7 +175,7 @@ function plot_experiment_estimates(results, sparams, models; is_combined=false, 
         plot!(X, Y, ribbon=isempty(ribbon) ? nothing : ribbon, label=k, lw=3)
     end
     truth = truth_estimate(sparams, models)
-    hline!([truth], c=:black, lw=2, ls=:dash, alpha=0.8, label="truth")
+    hline!([truth], c=:black, lw=1, ls=:dash, alpha=0.8, label="truth")
     return plot!(xlabel="number of samples", ylabel="p(fail) estimate", legend=:topright, yaxis=:log, size=(600,300))
 end
 
@@ -218,7 +218,7 @@ function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missin
         nominal_end = mean(nominal)[end]
 
         # Actual nominal line hline
-        plot([1, length(nominal)], [nominal_end, nominal_end]; label=false, c=nominal_color, lw=2, ls=:dash, alpha=0.5)
+        plot([1, length(nominal)], [nominal_end, nominal_end]; label=false, c=nominal_color, lw=2, ls=:dash, alpha=0.5, grid=true)
 
         if !full_nominal
             nominal = nominal[1:min(length(nominal), num_samples[end])]
@@ -247,14 +247,15 @@ function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missin
         fillalpha=0.2,
         margin=scale ≥ 1.5 ? 1Plots.mm : 15Plots.mm,
         legend=:topright,
+        grid=true,
     )
-
+    
     if show_nominal
         xlims!(1, length(nominal))
     else
         xlims!(1, num_samples[end])
     end
-
+    
     xl = xlims()
 
     if !ismissing(gpy)
@@ -270,7 +271,7 @@ function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missin
         else
             plttwinargs = (xlims=xl, label=false)
         end
-        plttwin = plot(plttwindata...; plttwinargs..., bsv_ls..., alpha=0.5)
+        plot(plttwindata...; plttwinargs..., bsv_ls..., alpha=0.5, framestyle=:box)
         yl = ylims()
         if logscale
             yl = (yl[1], yl[2]*100_000_000_000_000)
@@ -278,10 +279,10 @@ function plot_p_estimates(num_samples, p_estimates, p_estimates_conf; gpy=missin
             yl = (yl[1], yl[2]*3)
         end
         ylims!(yl)
-        plt = plot(plt)
-        plot!(twinx(), plttwindata...; plttwinargs..., ylims=yl, ylabel="number of failures", bsv_ls..., ls=twinls)
+        plt = plot(plt, fontfamily="Computer Modern", framestyle=:box, grid=true)
+        plot!(twinx(), plttwindata...; plttwinargs..., ylims=yl, ylabel="number of failures", bsv_ls..., ls=twinls, grid=true, gridstyle=:dot, framestyle=:box)
         if show_nominal
-            plot!(twinx(), eachindex(nominal), cs0(nominal); xlims=xl, ylims=yl, yaxis=:log, ticks=false, label=false, c=nominal_color, lw=1, ls=twinls, alpha=1.0)
+            plot!(twinx(), eachindex(nominal), cs0(nominal); xlims=xl, ylims=yl, plttwinargs..., ticks=false, label=false, c=nominal_color, lw=1, ls=twinls, alpha=1.0, framestyle=:box)
         end
     end
 

@@ -32,7 +32,7 @@ end
 Return mean and variance of `N` different importance sampling estimates of p(fail).
 """
 function lw_statistics(gp, models; N=1, m=fill(500, length(models)))
-    lw_ests = [p_estimate(gp, models; m, grid=false) for _ in 1:N]
+    lw_ests = [p_estimate(gp, models; m, grid=false)[1] for _ in 1:N]
     μ = mean(lw_ests)
     σ² = var(lw_ests)
     return μ, σ²

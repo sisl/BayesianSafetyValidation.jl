@@ -1,8 +1,8 @@
 # TODO: PR for AbstractGPs
 Base.vcat(x1::ColVecs, x2::ColVecs) = ColVecs(hcat(x1.X, x2.X))
 
-@with_kw mutable struct Surrogate
-    f
+@with_kw mutable struct Surrogate{F<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP, GaussianProcesses.GPE, Nothing}}
+    f::F
     x = []
     y = []
     σ = exp(-0.1)
@@ -15,36 +15,54 @@ transform(y; ϵ=1e-5) = y*(1 - ϵ) + (1 - y)*ϵ
 inverse_transform(ŷ; ϵ=1e-5) = (ŷ - ϵ) / (1 - 2ϵ)
 
 apply(y) = logit(transform(y))
+apply(y::Array) = apply.(y)
 inverse(y) = clamp(inverse_transform(inverse_logit(y)), 0, 1) # small variations based on ϵ may cause GP values just slightly under 0 and slightly over 1, so clamp.
+inverse(y::Array) = inverse.(y)
 
-function initialize_gp(; σ=0.1)
-    kernel = SqExponentialKernel()
+global DEFAULT_GP_ARGS = (σ=exp(-0.1), ℓ=exp(-0.1))
+
+function initialize_gp(; σ=DEFAULT_GP_ARGS.σ, ℓ=DEFAULT_GP_ARGS.ℓ)
+    if isnothing(ℓ)
+        kernel = σ^2 * SqExponentialKernel()
+    else
+        kernel = σ^2 * with_lengthscale(SqExponentialKernel(), ℓ)
+    end
     mean_f = AbstractGPs.ZeroMean()
-    return Surrogate(; f=GP(mean_f, kernel), σ)
+    return Surrogate(; f=AbstractGPs.GP(mean_f, kernel), σ)
 end
 
 """
 Fit Gaussian process surrogate model to results.
 """
-function gp_fit!(gp::Surrogate, X, Y; sequential=true)
-    Z = apply.(Y)
+gp_fit(X, Y; kwargs...) = gp_fit(initialize_gp(; kwargs...), X, Y)
+
+function gp_fit(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, X, Y; sequential=true, kwargs...)
+    Z = apply(Y)
     idx = length(gp.y)
     I = idx+1:length(Y)
     if sequential
-        gp.f = posterior(gp.f(ColVecs(X[:,I]), gp.σ), Z[I]) # only re-fit the newest points
+        f = posterior(gp.f(ColVecs(X[:,I]), gp.σ), Z[I]) # only re-fit the newest points
     else
-        gp.f = posterior(gp.f(ColVecs(X), gp.σ), Z)
+        f = posterior(gp.f(ColVecs(X), gp.σ), Z)
     end
-    gp.x = X
-    gp.y = Z
+    gp = Surrogate(; f, x=X, y=Z, σ=gp.σ)
     return gp
 end
 
+function gp_fit(::Union{Surrogate{<:GaussianProcesses.GPE}, Nothing}, X, Y; ν=1/2, ll=-0.1, lσ=-0.1, opt=false)
+    kernel = Matern(ν, ll, lσ)
+    mean_f = MeanZero()
+    Z = apply.(Y)
+    f = GaussianProcesses.GP(X, Z, mean_f, kernel)
+    gp = Surrogate(; f, x=X, y=Z)
+    opt && @suppress optimize!(gp, method=NelderMead())
+    return gp
+end
 
 function gp_fit(results::Dict)
     X::Matrix = cmat([[k...] for k in collect(keys(results))])
     Y::Vector{Bool} = collect(values(results))
-    return gp_fit!(X, Y)
+    return gp_fit(X, Y)
 end
 
 
@@ -52,38 +70,49 @@ end
 Predicted GP mean and covariance, given as a vector (reshaped to a matrix)
 """
 # predict_f_vec(gp, x::Array) = (f_gp(gp, x), σ²_gp(gp, x))
-function predict_f_vec(gp, x::Array)
+function predict_f_vec(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, x::Array)
     𝒩 = marginals(gp.f(colvec(x), gp.σ))[1] # get the marginal in one go
     return inverse(𝒩.μ), inverse(𝒩.σ)^2
 end
-predict_f_vec(gp, x::Number) = predict_f_vec(gp, [x])
+predict_f_vec(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, x::Number) = predict_f_vec(gp, [x])
+predict_f_vec(gp::Surrogate{<:GaussianProcesses.GPE}, x::Array) = map(y->inverse.(y), begin
+    μ_σ² = predict_f(gp.f, reshape(x', (:,1)))
+    μ = μ_σ²[1][1]
+    σ² = μ_σ²[2][1]
+    (μ, σ²)
+end)
+predict_f_vec(gp::Surrogate{<:GaussianProcesses.GPE}, x::Number) = predict_f_vec(gp,[x])
 
 vec2mat(x::Vector) = reshape(x, :, 1)
 colvec(x::Vector) = ColVecs(vec2mat(x))
+colvec(x::Matrix) = ColVecs(x)
 colvec(x::Number) = [x]
 
 """
 Predicted GP mean (`predict_f` outputs a [[mean], [cov]] so we want just the mean as [1][1])
 """
-f_gp(gp, x) = inverse(mean(gp.f(colvec(x), gp.σ))[1])
-
+f_gp(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, x) = inverse(mean(gp.f(colvec(x), gp.σ))[1])
+f_gp(gp::Surrogate{<:GaussianProcesses.GPE}, x) = predict_f_vec(gp,x)[1]
 
 """
 Predicted GP variance (`predict_f` outputs a [[mean], [cov]] so we want just the variance as [2][1])
 """
-σ²_gp(gp, x) = inverse(cov(gp.f(colvec(x), gp.σ))[1])
+σ²_gp(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, x) = inverse(cov(gp.f(colvec(x), gp.σ))[1])
+σ²_gp(gp::Surrogate{<:GaussianProcesses.GPE}, x) = predict_f_vec(gp,x)[2]
 
 
 """
 Predicted GP standard deviation.
 """
-σ_gp(gp, x) = sqrt(σ²_gp(gp,x))
+σ_gp(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, x) = sqrt(σ²_gp(gp,x))
+σ_gp(gp::Surrogate{<:GaussianProcesses.GPE}, x) = sqrt(σ²_gp(gp,x))
 
 
 """
 Predicted GP failure (hard boundary).
 """
-g_gp(gp, x) = f_gp(gp,x) >= 0.5
+g_gp(gp::Surrogate{<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP}}, x) = f_gp(gp,x) >= 0.5
+g_gp(gp::Surrogate{<:GaussianProcesses.GPE}, x) = f_gp(gp,x) >= 0.5
 
 
 """
@@ -142,9 +171,10 @@ lcb(gp, x; λ=1, hard=false) = (hard ? g_gp(gp,x) : f_gp(gp,x)) - λ*σ_gp(gp,x)
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty over entire space (using variance or stdev in surrogate).
 """
-function uncertainty_acquisition(gp, x, models::Vector{OperationalParameters}; kwargs...)
+function uncertainty_acquisition(gp::Surrogate, x, models::Vector{OperationalParameters}; kwargs...)
     μ_σ² = predict_f_vec(gp, x)
-    return uncertainty_acquisition(μ_σ²; kwargs...)
+    p = pdf(models, x)
+    return uncertainty_acquisition(μ_σ², p; kwargs...)
 end
 
 function uncertainty_acquisition(μ_σ², p; α=Inf, t=1, var=false)
@@ -166,9 +196,10 @@ end
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty around decision boundary.
 """
-function boundary_acquisition(gp, x, models::Vector{OperationalParameters}; kwargs...)
+function boundary_acquisition(gp::Surrogate, x, models::Vector{OperationalParameters}; kwargs...)
 	μ_σ² = predict_f_vec(gp, x)
-    return boundary_acquisition(μ_σ²; kwargs...)
+    p = pdf(models, x)
+    return boundary_acquisition(μ_σ², p; kwargs...)
 end
 
 function boundary_acquisition(μ_σ², p; λ=1, t=1, α=1)
@@ -191,9 +222,10 @@ end
 """
 Gaussian process acquisition function to determine which point to sample next to reduce uncertainty of failure distribution.
 """
-function failure_region_sampling_acquisition(gp, x, models::Vector{OperationalParameters}; kwargs...)
+function failure_region_sampling_acquisition(gp::Surrogate, x, models::Vector{OperationalParameters}; kwargs...)
 	μ_σ² = predict_f_vec(gp, x)
-    return failure_region_sampling_acquisition(μ_σ²; kwargs...)
+    p = pdf(models, x)
+    return failure_region_sampling_acquisition(μ_σ², p; kwargs...)
 end
 
 function failure_region_sampling_acquisition(μ_σ², p; λ=1, probability_valued_system=true, loosen_thresh=false)
@@ -259,6 +291,7 @@ function get_next_point(y, F̂, P, models; acq, match_original=false, return_wei
         acq_idx = max_ind
     end
     push!(next_point, acq_output[acq_idx])
+
     if return_weight
         Z = normalize(acq_output, 1)
         if all(isnan.(Z))
@@ -269,6 +302,22 @@ function get_next_point(y, F̂, P, models; acq, match_original=false, return_wei
         q = Z[acq_idx]
         w = p/q
         return next_point, w
+    else
+        return next_point
+    end
+end
+
+
+function get_next_point(models; acq, return_weight=false, options=Optim.Options())
+    lb = Float64.(get_lower_bounds(models))
+    ub = Float64.(get_upper_bounds(models))
+    initx = rand(models)
+    # maximize
+    results = optimize(x->-acq(x), lb, ub, initx, ParticleSwarm(lower=lb, upper=ub, n_particles=3), options)
+    next_point = results.minimizer
+    push!(next_point, results.minimum)
+    if return_weight
+        error("get_next_point with Optim needs to handle `return_weight`")
     else
         return next_point
     end
@@ -299,8 +348,8 @@ function sample_next_point(y, F̂, P, models; n=1, τ=1, acq, return_weight=fals
     Z = normalize(acq_output .^ (1/τ), 1)
     if all(isnan.(Z))
         @warn "All weights are NaN"
-        Z = normalize(acq_output .^ BigFloat(1/τ), 1)
-        # Z = normalize(ones(size(Z)), 1)
+        Z = normalize(ones(size(Z)), 1)
+        # Z = normalize(acq_output .^ BigFloat(1/τ), 1)
     end
     candidate_samples = [X...]
     weights = [Z...]

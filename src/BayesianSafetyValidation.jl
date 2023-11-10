@@ -7,14 +7,17 @@ using ColorSchemes
 using AbstractGPs
 import AbstractGPs.KernelFunctions: ColVecs, SqExponentialKernel
 using KernelDensity
+using GaussianProcesses
 using LatinHypercubeSampling
 using LinearAlgebra
-using Optim
+@reexport using Optim
 @reexport using Parameters
-using Plots
+@reexport using Plots
+using ProgressMeter
 using Random
 using Sobol
 using StatsBase
+using StatsFuns
 using Suppressor
 
 include("parameters.jl")
@@ -49,6 +52,7 @@ export
     apply,
     inverse,
     initialize_gp,
+    gp_fit,
     gp_fit!,
     predict_f_vec,
     f_gp,
@@ -97,6 +101,8 @@ export
     compute_metrics,
 
     ## plotting.jl
+    set_colors!,
+    reset_colors!,
     get_model_ranges,
     plot_data!,
     plot_soft_boundary,

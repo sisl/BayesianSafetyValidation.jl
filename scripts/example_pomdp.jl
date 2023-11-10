@@ -14,8 +14,8 @@ end
     using BayesianSafetyValidation
     using .BetaZero
     using LightDark
-    using ParticleBeliefs
-    using ParticleFilters
+    import ParticleBeliefs: ParticleHistoryBelief, BootstrapFilter
+    import ParticleFilters: particles
     using POMDPs
     using POMDPTools
     using LocalApproximationValueIteration
@@ -26,13 +26,13 @@ end
 
 
     function input_representation(b::ParticleHistoryBelief{LightDarkState})
-        Y = [s.y for s in ParticleFilters.particles(b)]
+        Y = [s.y for s in particles(b)]
         μ = mean(Y)
         σ = std(Y)
         return Float32[μ, σ]
     end
 
-    lightdark_belief_reward(pomdp, b, a, bp) = mean(reward(pomdp, s, a) for s in ParticleFilters.particles(b))
+    lightdark_belief_reward(pomdp, b, a, bp) = mean(reward(pomdp, s, a) for s in particles(b))
     POMDPs.convert_s(::Type{A}, b::ParticleHistoryBelief{LightDarkState}, m) where A<:AbstractArray = eltype(A)[input_representation(b)...]
     POMDPs.convert_s(::Type{ParticleHistoryBelief{LightDarkState}}, b::A, m) where A<:AbstractArray = ParticleHistoryBelief(particles=ParticleCollection(rand(LDNormalStateDist(b[1], b[2]), up.pf.n_init)))
 
@@ -51,7 +51,7 @@ end
     # NOTE:
     # rare = did not execute stop (got lost)
     # non-rare = did not execute stop or stopped NOT at the goal 0 ± 1
-    global RARE_FAILURE = true
+    global RARE_FAILURE = false
 
     Base.@kwdef mutable struct LightDarkPolicy <: System.SystemParameters
         pomdp::POMDP = MODEL
@@ -103,35 +103,38 @@ global RUN_NOMINAL = false
 if RUN_NOMINAL
     @time nominal = nominal_estimate(system_params, models)
     BSON.@save nominal_filename nominal
+else
+    BSON.@load nominal_filename nominal
 end
 
-# !@isdefined(nominal) && 
-BSON.@load nominal_filename nominal
-# nominal = fill(0.0005, 4*10^4)
+global LOAD_GP = true
 
-global LOAD_GP = false
+# N = RARE_FAILURE ? Int(1.5*10^4) : 300 # 3000
+N = RARE_FAILURE ? Int(5000*3) : 900 # 3000
+T = N÷3
+nominalN = RARE_FAILURE ? 3*10^4 : 2_000 # length(nominal)
 
 if LOAD_GP
+    global gp, weights
     @info "Loading GP..."
-    BSON.@load "gp_lightdark_$(RARE_FAILURE ? "rare" : "nonrare").bson" gp
+    BSON.@load "gp_lightdark_$(RARE_FAILURE ? "rare" : "nonrare")_1.bson" gp
+    @info "Loading weights..."
+    BSON.@load "weights_lightdark_$(RARE_FAILURE ? "rare" : "nonrare")_1.bson" weights
 elseif !RUN_NOMINAL
-    global surrogate, weights, X_failures, ml_failure, p_failure, gp, T
+    global surrogate, weights, X_failures, ml_failure, p_failure, gp, T, nominalN
 
     for seed in 1:1
-        # N = RARE_FAILURE ? Int(1.5*10^4) : 300 # 3000
-        N = RARE_FAILURE ? Int(5000*3) : 300 # 3000
-        T = N÷3
-        nominalN = RARE_FAILURE ? 4*10^4 : length(nominal)
         surrogate, weights = bayesian_safety_validation(
                                 system_params, models;
+                                use_abstract_gps=true,
+                                gp_args=(ℓ=nothing,),
                                 T=T,
-                                λ=RARE_FAILURE ? 0.1 : 1, # 0.5,
-                                αᵤ=RARE_FAILURE ? 10 : 2, # 10
-                                αᵦ=RARE_FAILURE ? 10 : 0,
+                                λ=RARE_FAILURE ? 0.1 : 0.1, # 1,
+                                αᵤ=RARE_FAILURE ? 10 : 0.1, # 2, 1 is good, 0.15
+                                αᵦ=RARE_FAILURE ? 10 : 0.1, # 0, 0.15
                                 sample_from_acquisitions=[true,true,true],
                                 self_normalizing=true,
-                                # sample_temperature=RARE_FAILURE ? 0.25 : 1, # 0.8 is nice.
-                                sample_temperature=RARE_FAILURE ? 0.5 : 1, # 0.8 is nice.
+                                sample_temperature=RARE_FAILURE ? 0.5 : 0.5, # 1, 0.8, 0.7
                                 frs_loosening=true,
                                 show_plots=false,
                                 plot_every=10,
@@ -153,7 +156,7 @@ elseif !RUN_NOMINAL
         plot1d(gp, models) |> display
         #==#
         num_samples, p_estimates, p_estimate_confs = recompute_p_estimates(gp, models; weights)
-        plot_p_estimates(num_samples, p_estimates, p_estimate_confs; nominal=nominal[1:nominalN], full_nominal=false, gpy=gp.y, scale=1.5, logscale=false)
+        plot_p_estimates(num_samples, p_estimates, p_estimate_confs; nominal=nominal[1:nominalN], full_nominal=true, gpy=gp.y, scale=1.5, logscale=RARE_FAILURE)
         # plot_p_estimates(1:N, fill(0.0,N), fill(NaN, N); nominal=nominal[1:4*10^4], full_nominal=true)
         #==#
     end
