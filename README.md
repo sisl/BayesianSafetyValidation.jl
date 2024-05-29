@@ -4,6 +4,14 @@
 Estimate the probability of failure iteratively using a Gaussian process surrogate model and importance sampling, reframing the Bayesian optimization problem as a falsification and probability estimation problem.
 
 ```
+@article{moss2023bayesian,
+    title = {{Bayesian Safety Validation for Failure Probability Estimation of Black-Box Systems}},
+    author = {Robert J. Moss and Mykel J. Kochenderfer and Maxime Gariel and Arthur Dubois},
+    journal = {{AIAA Journal of Aerospace Information Systems (JAIS)}},
+    year = {2024},
+    url = {https://doi.org/10.2514/1.I011395}
+}
+
 @inproceedings{moss2023bayesian,
     title = {{Bayesian Safety Validation for Black-Box Systems}},
     author = {Robert J. Moss and Mykel J. Kochenderfer and Maxime Gariel and Arthur Dubois},
