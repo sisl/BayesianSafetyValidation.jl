@@ -1,6 +1,3 @@
-# TODO: PR for AbstractGPs
-Base.vcat(x1::ColVecs, x2::ColVecs) = ColVecs(hcat(x1.X, x2.X))
-
 @with_kw mutable struct Surrogate{F<:Union{AbstractGPs.AbstractGP, AbstractGPs.PosteriorGP, GaussianProcesses.GPE, Nothing}}
     f::F
     x = []
